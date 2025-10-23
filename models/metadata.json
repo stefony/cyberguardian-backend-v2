@@ -1,0 +1,15 @@
+{
+  "trained": true,
+  "training_date": "2025-10-21T23:07:33.539814",
+  "training_samples": 100,
+  "feature_names": [
+    "hour_of_day",
+    "day_of_week",
+    "request_count",
+    "unique_ips",
+    "avg_payload_size",
+    "suspicious_patterns",
+    "port_diversity",
+    "geographic_diversity"
+  ]
+}

@@ -1,0 +1,30 @@
+# Virtual environments
+.venv/
+backend/.venv/
+*.venv
+
+# Python cache
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment variables
+.env
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+logs/
+
+# Test files
+test_upload.py
+test.txt
+
+# OS junk
+.DS_Store
