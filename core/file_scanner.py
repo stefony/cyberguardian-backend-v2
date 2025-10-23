@@ -17,9 +17,7 @@ from typing import Dict, Any, Optional
 from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
-import nest_asyncio
 
-nest_asyncio.apply()
 
 # Load environment variables
 load_dotenv()
