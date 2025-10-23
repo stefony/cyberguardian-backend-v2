@@ -5,25 +5,20 @@ VirusTotal Integration & Hash Analysis
 Provides real file scanning capabilities:
 - File hash calculation (MD5, SHA1, SHA256)
 - VirusTotal API integration
-- File type detection
+- File type detection using puremagic (no system dependencies)
 - Malware analysis
 """
 
 import os
 import hashlib
-# Ако MAGIC_LIBRARY не е зададен, опитай да намериш libmagic.so в Nix store
-if "MAGIC_LIBRARY" not in os.environ:
-    candidates = sorted(glob.glob("/nix/store/*/lib/libmagic.so*"))
-    if candidates:
-        os.environ["MAGIC_LIBRARY"] = candidates[0]
-# --- End: ensure libmagic ---
-import magic
+import puremagic
 import vt
 from typing import Dict, Any, Optional
 from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
 import nest_asyncio
+
 nest_asyncio.apply()
 
 # Load environment variables
@@ -31,6 +26,7 @@ load_dotenv()
 
 # VirusTotal API Key
 VT_API_KEY = os.getenv("VIRUSTOTAL_API_KEY")
+
 
 class FileScanner:
     """Real file scanner with VirusTotal integration"""
@@ -81,7 +77,7 @@ class FileScanner:
     
     def detect_file_type(self, file_path: str) -> str:
         """
-        Detect file MIME type
+        Detect file MIME type using puremagic (no system dependencies)
         
         Args:
             file_path: Path to file
@@ -90,10 +86,14 @@ class FileScanner:
             File MIME type
         """
         try:
-            mime = magic.Magic(mime=True)
-            return mime.from_file(file_path)
+            # Use puremagic to detect file type
+            result = puremagic.magic_file(file_path)
+            if result:
+                # Return the first match's mime type
+                return result[0].mime_type if hasattr(result[0], 'mime_type') else result[0].extension
+            return "application/octet-stream"
         except Exception as e:
-            return "unknown"
+            return "application/octet-stream"
     
     def scan_file(self, file_path: str) -> Dict[str, Any]:
         """
