@@ -29,11 +29,14 @@ app = FastAPI(
 # CORS Configuration - allow frontend to communicate with backend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",  # Next.js dev server
-        "http://localhost:3001",
-        "http://localhost:8000",  # Backend
-    ],
+   allow_origins=[
+    "http://localhost:3000",  # Next.js dev server
+    "http://localhost:3001",
+    "http://localhost:8000",  # Backend
+    "https://cyberguardian-dashboard.vercel.app",  # Production frontend
+    "https://cyberguardian-dashboard-git-main-stefonys-projects.vercel.app",  # Git branch deploys
+    "https://*.vercel.app",  # All Vercel preview deployments
+],
     allow_credentials=True,
     allow_methods=["*"],  # Allow all methods (GET, POST, etc.)
     allow_headers=["*"],  # Allow all headers
