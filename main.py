@@ -41,6 +41,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],  # Allow all methods (GET, POST, etc.)
     allow_headers=["*"],  # Allow all headers
+    allow_origin_regex=r"https://.*\.vercel\.app",  # ДОБАВИ ТОЗИ РЕД за всички Vercel домейни
 )
 
 # Include routers
