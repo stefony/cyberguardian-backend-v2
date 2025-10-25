@@ -15,7 +15,8 @@ from api.settings import router as settings_router
 from api.emails import router as emails_router
 from api.honeypots import router as honeypots_router
 from api.ml import router as ml_router
-
+from api import threats, detection, deception, honeypots, ml, ai_insights, analytics, emails, settings, health
+from api.auth import router as auth_router
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -44,6 +45,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(health_router, prefix="/api", tags=["Health"])
+app.include_router(auth_router, prefix="/api", tags=["Authentication"]) 
 app.include_router(threats_router, prefix="/api", tags=["Threats"])
 app.include_router(detection_router, prefix="/api", tags=["Detection"])
 app.include_router(deception_router, prefix="/api", tags=["Deception"])

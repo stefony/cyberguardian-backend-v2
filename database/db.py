@@ -100,6 +100,54 @@ def init_database():
         )
     """)
     
+    # Users table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id TEXT PRIMARY KEY,
+            email TEXT UNIQUE NOT NULL,
+            username TEXT UNIQUE NOT NULL,
+            hashed_password TEXT NOT NULL,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            is_verified INTEGER NOT NULL DEFAULT 0,
+            is_admin INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT,
+            last_login TEXT,
+            full_name TEXT,
+            company TEXT
+        )
+    """)
+
+    # Licenses table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS licenses (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            license_key TEXT UNIQUE NOT NULL,
+            license_type TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            expires_at TEXT,
+            max_devices INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            activated_at TEXT,
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+    """)
+
+    # Device activations table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS device_activations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            license_id TEXT NOT NULL,
+            device_id TEXT NOT NULL,
+            device_name TEXT,
+            activated_at TEXT NOT NULL,
+            last_seen TEXT,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            FOREIGN KEY (license_id) REFERENCES licenses (id)
+        )
+    """)
+    
     conn.commit()
     conn.close()
     
@@ -661,6 +709,105 @@ def get_deception_stats() -> Dict[str, Any]:
         "interactions_today": interactions_today,
         "last_updated": datetime.now().isoformat()
     }
+
+
+# ========== USERS FUNCTIONS ==========
+
+import uuid
+# import hashlib  # No longer needed
+from typing import Optional
+
+def create_user(
+    email: str,
+    username: str,
+    password: str,
+    full_name: Optional[str] = None,
+    company: Optional[str] = None,
+    is_admin: bool = False
+) -> str:
+    """
+    Create a new user
+    
+    Returns: user_id
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    user_id = str(uuid.uuid4())
+    now = datetime.now().isoformat()
+    
+    # Hash password (simple SHA256 for now, will upgrade to bcrypt later)
+    hashed_password = password
+    
+    cursor.execute("""
+        INSERT INTO users 
+        (id, email, username, hashed_password, is_active, is_verified, is_admin, 
+         created_at, full_name, company)
+        VALUES (?, ?, ?, ?, 1, 0, ?, ?, ?, ?)
+    """, (user_id, email, username, hashed_password, int(is_admin), now, full_name, company))
+    
+    conn.commit()
+    conn.close()
+    
+    return user_id
+
+
+def get_user_by_email(email: str) -> Optional[Dict[str, Any]]:
+    """Get user by email"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
+    row = cursor.fetchone()
+    conn.close()
+    
+    return dict(row) if row else None
+
+
+def get_user_by_username(username: str) -> Optional[Dict[str, Any]]:
+    """Get user by username"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
+    row = cursor.fetchone()
+    conn.close()
+    
+    return dict(row) if row else None
+
+
+def get_user_by_id(user_id: str) -> Optional[Dict[str, Any]]:
+    """Get user by ID"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    
+    return dict(row) if row else None
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify password against hash"""
+    return hashlib.sha256(plain_password.encode()).hexdigest() == hashed_password
+
+
+def update_last_login(user_id: str):
+    """Update user's last login timestamp"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    now = datetime.now().isoformat()
+    
+    cursor.execute("""
+        UPDATE users 
+        SET last_login = ?, updated_at = ?
+        WHERE id = ?
+    """, (now, now, user_id))
+    
+    conn.commit()
+    conn.close()
 
 
 # Initialize database on module import
