@@ -18,6 +18,7 @@ from api.ml import router as ml_router
 from api import threats, detection, deception, honeypots, ml, ai_insights, analytics, emails, settings, health
 from api.auth import router as auth_router
 from contextlib import asynccontextmanager
+from api.websocket import router as websocket_router
 
 # Initialize admin user on startup
 from database.init_admin import init_admin_user
@@ -68,6 +69,7 @@ app.include_router(settings_router, prefix="/api", tags=["Settings"])
 app.include_router(emails_router, prefix="/api", tags=["Email Scanner"])
 app.include_router(honeypots_router, prefix="/api", tags=["Honeypots"])
 app.include_router(ml_router, prefix="/api", tags=["Machine Learning"])
+app.include_router(websocket_router, prefix="/api", tags=["WebSocket"])
 
 @app.get("/")
 async def root():
