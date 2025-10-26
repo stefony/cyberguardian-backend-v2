@@ -17,14 +17,26 @@ from api.honeypots import router as honeypots_router
 from api.ml import router as ml_router
 from api import threats, detection, deception, honeypots, ml, ai_insights, analytics, emails, settings, health
 from api.auth import router as auth_router
+from contextlib import asynccontextmanager
 
+# Initialize admin user on startup
+from database.init_admin import init_admin_user
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan events"""
+    # Startup
+    print("🚀 Starting CyberGuardian AI Backend...")
+    init_admin_user()
+    yield
+    # Shutdown
+    print("👋 Shutting down...")
 # Initialize FastAPI app
 app = FastAPI(
-    title="CyberGuardian AI API",
-    description="Advanced AI-powered cybersecurity platform API",
+    title="CyberGuardian AI",
+    description="Advanced AI-Powered Cybersecurity Platform",
     version="1.0.0",
-    docs_url="/api/docs",
-    redoc_url="/api/redoc",
+    lifespan=lifespan  # ADD THIS
 )
 
 # CORS Configuration - allow frontend to communicate with backend
