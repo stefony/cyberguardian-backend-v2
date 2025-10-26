@@ -32,29 +32,29 @@ async def lifespan(app: FastAPI):
     yield
     # Shutdown
     print("👋 Shutting down...")
+
 # Initialize FastAPI app
 app = FastAPI(
     title="CyberGuardian AI",
     description="Advanced AI-Powered Cybersecurity Platform",
     version="1.0.0",
-    lifespan=lifespan  # ADD THIS
+    lifespan=lifespan
 )
 
 # CORS Configuration - allow frontend to communicate with backend
 app.add_middleware(
     CORSMiddleware,
-   allow_origins=[
-    "http://localhost:3000",  # Next.js dev server
-    "http://localhost:3001",
-    "http://localhost:8000",  # Backend
-    "https://cyberguardian-dashboard.vercel.app",  # Production frontend
-    "https://cyberguardian-dashboard-git-main-stefonys-projects.vercel.app",  # Git branch deploys
-    "https://*.vercel.app",  # All Vercel preview deployments
-],
+    allow_origins=[
+        "http://localhost:3000",  # Next.js dev server
+        "http://localhost:3001",
+        "http://localhost:8000",  # Backend
+        "https://cyberguardian-dashboard.vercel.app",  # Production frontend
+        "https://cyberguardian-dashboard-git-main-stefonys-projects.vercel.app",  # Git branch deploys
+    ],
     allow_credentials=True,
     allow_methods=["*"],  # Allow all methods (GET, POST, etc.)
     allow_headers=["*"],  # Allow all headers
-    allow_origin_regex=r"https://.*\.vercel\.app",  # ДОБАВИ ТОЗИ РЕД за всички Vercel домейни
+    allow_origin_regex=r"https://.*\.vercel\.app",  # All Vercel domains
 )
 
 # Include routers
@@ -69,7 +69,7 @@ app.include_router(settings_router, prefix="/api", tags=["Settings"])
 app.include_router(emails_router, prefix="/api", tags=["Email Scanner"])
 app.include_router(honeypots_router, prefix="/api", tags=["Honeypots"])
 app.include_router(ml_router, prefix="/api", tags=["Machine Learning"])
-app.include_router(websocket_router, prefix="/api", tags=["WebSocket"])
+app.include_router(websocket_router, tags=["WebSocket"])  # No prefix for WebSocket
 
 @app.get("/")
 async def root():
@@ -87,7 +87,8 @@ async def root():
         "settings": "/api/settings",
         "emails": "/api/emails",
         "honeypots": "/api/honeypots",
-        "ml": "/api/ml"
+        "ml": "/api/ml",
+        "ws": "/api/ws"
     }
 
 

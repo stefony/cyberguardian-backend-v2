@@ -10,7 +10,7 @@ import asyncio
 import json
 
 
-router = APIRouter(tags=["WebSocket"])
+router = APIRouter(prefix="/api/ws", tags=["WebSocket"])
 
 
 @router.websocket("/connect")
