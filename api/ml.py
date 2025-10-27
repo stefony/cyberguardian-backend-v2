@@ -3,10 +3,11 @@ CyberGuardian AI - ML API
 Machine Learning endpoints for threat detection
 """
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Request
 from pydantic import BaseModel
 from typing import List, Optional, Dict
 import logging
+from middleware.rate_limiter import limiter, READ_LIMIT, WRITE_LIMIT
 
 # Import ML Engine
 try:
@@ -85,7 +86,8 @@ class TrainingResponse(BaseModel):
 # ============================================
 
 @router.get("/ml/status", response_model=ModelStatusResponse)
-async def get_ml_status():
+@limiter.limit(READ_LIMIT)  # 100 requests per minute
+async def get_ml_status(request: Request):
     """
     Get ML model status and metadata
     
@@ -105,7 +107,8 @@ async def get_ml_status():
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/ml/train", response_model=TrainingResponse)
-async def train_models(request: TrainingRequest, background_tasks: BackgroundTasks):
+@limiter.limit(WRITE_LIMIT)  # 30 requests per minute
+async def train_models(http_request: Request, request: TrainingRequest, background_tasks: BackgroundTasks):
     """
     Train ML models on available data
     
@@ -145,7 +148,8 @@ async def train_models(request: TrainingRequest, background_tasks: BackgroundTas
         )
 
 @router.post("/ml/predict/anomaly", response_model=AnomalyPredictionResponse)
-async def predict_anomaly(log: LogEntry):
+@limiter.limit(WRITE_LIMIT)  # 30 requests per minute
+async def predict_anomaly(request: Request, log: LogEntry):
     """
     Predict if a log entry is anomalous
     
@@ -176,7 +180,8 @@ async def predict_anomaly(log: LogEntry):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/ml/analyze/behavior", response_model=BehaviorAnalysisResponse)
-async def analyze_behavior(log: LogEntry):
+@limiter.limit(WRITE_LIMIT)  # 30 requests per minute
+async def analyze_behavior(request: Request, log: LogEntry):
     """
     Analyze behavioral patterns in log entry
     
@@ -207,7 +212,8 @@ async def analyze_behavior(log: LogEntry):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/ml/threat-score", response_model=ThreatScoreResponse)
-async def calculate_threat_score(log: LogEntry):
+@limiter.limit(WRITE_LIMIT)  # 30 requests per minute
+async def calculate_threat_score(request: Request, log: LogEntry):
     """
     Calculate comprehensive threat score
     
@@ -238,7 +244,8 @@ async def calculate_threat_score(log: LogEntry):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/ml/batch/threat-scores")
-async def batch_threat_scores(logs: List[LogEntry]):
+@limiter.limit(WRITE_LIMIT)  # 30 requests per minute
+async def batch_threat_scores(request: Request, logs: List[LogEntry]):
     """
     Calculate threat scores for multiple logs
     
@@ -270,7 +277,8 @@ async def batch_threat_scores(logs: List[LogEntry]):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/ml/test")
-async def test_ml_system():
+@limiter.limit(READ_LIMIT)  # 100 requests per minute
+async def test_ml_system(request: Request):
     """
     Test ML system availability
     """

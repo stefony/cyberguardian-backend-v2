@@ -3,10 +3,11 @@ CyberGuardian AI - Honeypots API
 Real honeypot management endpoints
 """
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Request
 from pydantic import BaseModel
 from typing import List, Optional, Dict
 import logging
+from middleware.rate_limiter import limiter, READ_LIMIT, WRITE_LIMIT
 
 # Import HoneypotManager
 try:
@@ -58,7 +59,8 @@ class StartHoneypotRequest(BaseModel):
 # ============================================
 
 @router.get("/honeypots/status")
-async def get_honeypots_status():
+@limiter.limit(READ_LIMIT)  # 100 requests per minute
+async def get_status(request: Request):
     """
     Get status of all honeypots
     
@@ -88,7 +90,8 @@ async def get_honeypots_status():
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/honeypots/start/{honeypot_type}")
-async def start_honeypot(honeypot_type: str, background_tasks: BackgroundTasks):
+@limiter.limit(WRITE_LIMIT)  # 30 requests per minute
+async def start_honeypot(request: Request, honeypot_type: str, background_tasks: BackgroundTasks):
     """
     Start a specific honeypot
     
@@ -121,7 +124,8 @@ async def start_honeypot(honeypot_type: str, background_tasks: BackgroundTasks):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/honeypots/stop/{honeypot_type}")
-async def stop_honeypot(honeypot_type: str):
+@limiter.limit(WRITE_LIMIT)  # 30 requests per minute
+async def stop_honeypot(request: Request, honeypot_type: str):
     """
     Stop a specific honeypot
     
@@ -154,7 +158,8 @@ async def stop_honeypot(honeypot_type: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/honeypots/start-all")
-async def start_all_honeypots(background_tasks: BackgroundTasks):
+@limiter.limit(WRITE_LIMIT)  # 30 requests per minute
+async def start_all_honeypots(request: Request, background_tasks: BackgroundTasks):
     """
     Start all honeypots
     """
@@ -179,7 +184,8 @@ async def start_all_honeypots(background_tasks: BackgroundTasks):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/honeypots/stop-all")
-async def stop_all_honeypots():
+@limiter.limit(WRITE_LIMIT)  # 30 requests per minute
+async def stop_all_honeypots(request: Request):
     """
     Stop all honeypots
     """
@@ -200,7 +206,8 @@ async def stop_all_honeypots():
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/honeypots/attacks", response_model=List[AttackLogResponse])
-async def get_recent_attacks(limit: int = 50):
+@limiter.limit(READ_LIMIT)  # 100 requests per minute
+async def get_attacks(request: Request, limit: int = 50):
     """
     Get recent attack logs from all honeypots
     
@@ -221,7 +228,8 @@ async def get_recent_attacks(limit: int = 50):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/honeypots/statistics", response_model=HoneypotStatsResponse)
-async def get_honeypot_statistics():
+@limiter.limit(READ_LIMIT)  # 100 requests per minute
+async def get_statistics(request: Request):
     """
     Get honeypot statistics
     
@@ -245,8 +253,9 @@ async def get_honeypot_statistics():
         logger.error(f"Failed to get statistics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/honeypots/test")
-async def test_honeypot_system():
+@router.post("/honeypots/test")
+@limiter.limit(WRITE_LIMIT)  # 30 requests per minute
+async def test_honeypot_system(request: Request):
     """
     Test honeypot system availability
     """

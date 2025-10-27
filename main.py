@@ -1,6 +1,6 @@
 """
 CyberGuardian AI - FastAPI Backend
-Main application entry point
+Main application entry point with Rate Limiting
 """
 
 from fastapi import FastAPI
@@ -20,6 +20,10 @@ from api.auth import router as auth_router
 from contextlib import asynccontextmanager
 from api.websocket import router as websocket_router
 
+# Import Rate Limiting
+from middleware.rate_limiter import limiter, rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+
 # Initialize admin user on startup
 from database.init_admin import init_admin_user
 
@@ -28,6 +32,11 @@ async def lifespan(app: FastAPI):
     """Lifespan events"""
     # Startup
     print("🚀 Starting CyberGuardian AI Backend...")
+    print("🛡️  Rate Limiting: ENABLED")
+    print("   🔐 Auth: 5 req/15min")
+    print("   📊 Read: 100 req/min")
+    print("   ✍️  Write: 30 req/min")
+    print("   🔥 Threat Intel: 60 req/min")
     init_admin_user()
     yield
     # Shutdown
@@ -36,10 +45,16 @@ async def lifespan(app: FastAPI):
 # Initialize FastAPI app
 app = FastAPI(
     title="CyberGuardian AI",
-    description="Advanced AI-Powered Cybersecurity Platform",
+    description="Advanced AI-Powered Cybersecurity Platform with Rate Limiting",
     version="1.0.0",
     lifespan=lifespan
 )
+
+# ============================================
+# Add Rate Limiting to App
+# ============================================
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 # CORS Configuration - allow frontend to communicate with backend
 app.add_middleware(
@@ -58,8 +73,13 @@ app.add_middleware(
 )
 
 # Include routers
+# Health check - NO rate limit
 app.include_router(health_router, prefix="/api", tags=["Health"])
-app.include_router(auth_router, prefix="/api", tags=["Authentication"]) 
+
+# Authentication - STRICT rate limit (applied in auth.py router)
+app.include_router(auth_router, prefix="/api", tags=["Authentication"])
+
+# Threats, Detection, Deception - Rate limited (applied in respective routers)
 app.include_router(threats_router, prefix="/api", tags=["Threats"])
 app.include_router(detection_router, prefix="/api", tags=["Detection"])
 app.include_router(deception_router, prefix="/api", tags=["Deception"])
@@ -77,7 +97,8 @@ async def root():
     return {
         "message": "CyberGuardian AI API",
         "version": "1.0.0",
-        "docs": "/api/docs",
+        "status": "✅ Protected with Rate Limiting",
+        "docs": "/docs",
         "health": "/api/health",
         "threats": "/api/threats",
         "detection": "/api/detection",
@@ -88,9 +109,8 @@ async def root():
         "emails": "/api/emails",
         "honeypots": "/api/honeypots",
         "ml": "/api/ml",
-        "ws": "/api/ws"
+        "ws": "/ws"
     }
-
 
 # Run with: uvicorn main:app --reload --host 0.0.0.0 --port 8000
 if __name__ == "__main__":

@@ -3,10 +3,12 @@ CyberGuardian AI - Threats API
 Threat management endpoints with SQLite integration
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from datetime import datetime
+from fastapi import Request
+from middleware.rate_limiter import limiter, READ_LIMIT, WRITE_LIMIT
 
 from database.db import (
     get_threats as db_get_threats,
@@ -113,7 +115,9 @@ initialize_sample_threats()
 
 
 @router.get("/threats", response_model=List[Threat])
+@limiter.limit(READ_LIMIT)  # 100 requests per minute
 async def get_threats(
+    request: Request,
     severity: Optional[str] = None,
     status: Optional[str] = None,
     limit: int = 100,
@@ -133,7 +137,8 @@ async def get_threats(
 
 
 @router.get("/threats/stats")
-async def get_threat_stats():
+@limiter.limit(READ_LIMIT)  # 100 requests per minute
+async def get_threat_stats(request: Request):
     """
     Get threat statistics (counts by severity, status, etc.)
     """
@@ -142,7 +147,8 @@ async def get_threat_stats():
 
 
 @router.get("/threats/{threat_id}", response_model=Threat)
-async def get_threat(threat_id: int):
+@limiter.limit(READ_LIMIT)  # 100 requests per minute
+async def get_threat(request: Request, threat_id: int):
     """
     Get detailed information about a specific threat
     """
@@ -155,7 +161,8 @@ async def get_threat(threat_id: int):
 
 
 @router.post("/threats", response_model=Threat)
-async def create_threat(threat: ThreatCreate):
+@limiter.limit(WRITE_LIMIT)  # 30 requests per minute
+async def create_threat(request: Request, threat: ThreatCreate):
     """
     Create a new threat entry
     (Used by detection engines to report threats)
@@ -175,7 +182,8 @@ async def create_threat(threat: ThreatCreate):
 
 
 @router.post("/threats/block")
-async def block_threat(action: ThreatAction):
+@limiter.limit(WRITE_LIMIT)  # 30 requests per minute
+async def block_threat(request: Request, action: ThreatAction):
     """
     Block a threat by blocking the source IP
     """
@@ -205,7 +213,8 @@ async def block_threat(action: ThreatAction):
 
 
 @router.post("/threats/dismiss")
-async def dismiss_threat(action: ThreatAction):
+@limiter.limit(WRITE_LIMIT)  # 30 requests per minute
+async def dismiss_threat(request: Request, action: ThreatAction):
     """
     Dismiss a threat (mark as false positive or acknowledged)
     """

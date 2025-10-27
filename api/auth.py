@@ -2,7 +2,7 @@
 Authentication API Router
 """
 
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, status, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr
 from typing import Optional
@@ -22,6 +22,8 @@ from core.auth import (
     decode_access_token,
     ACCESS_TOKEN_EXPIRE_MINUTES
 )
+from fastapi import Request  # Добави Request към съществуващия FastAPI import
+from middleware.rate_limiter import limiter, AUTH_LIMIT
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -100,7 +102,8 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
 # ========== ENDPOINTS ==========
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-async def register(data: RegisterRequest):
+@limiter.limit(AUTH_LIMIT)  # 5 requests per 15 minutes
+async def register(request: Request, data: RegisterRequest):
     """
     Register a new user
     """
@@ -152,7 +155,8 @@ async def register(data: RegisterRequest):
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(data: LoginRequest):
+@limiter.limit(AUTH_LIMIT)  # 5 requests per 15 minutes
+async def login(request: Request, data: LoginRequest):
     """
     Login and get JWT token
     """
@@ -198,7 +202,8 @@ async def login(data: LoginRequest):
 
 
 @router.get("/me", response_model=UserResponse)
-async def get_current_user_info(current_user: dict = Depends(get_current_user)):
+@limiter.limit("60 per minute")  # Liberal - just checking user info
+async def get_current_user_info(request: Request, current_user: dict = Depends(get_current_user)):
     """
     Get current authenticated user info
     """
@@ -208,7 +213,8 @@ async def get_current_user_info(current_user: dict = Depends(get_current_user)):
 
 
 @router.post("/logout")
-async def logout():
+@limiter.limit("30 per minute")  # Liberal for logout
+async def logout(request: Request):
     """
     Logout (client-side only - remove token)
     """

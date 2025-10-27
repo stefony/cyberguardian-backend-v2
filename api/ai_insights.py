@@ -3,11 +3,12 @@ CyberGuardian AI - AI Insights API
 AI-powered threat predictions and risk analysis
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import List, Dict, Any
 from datetime import datetime, timedelta
 import random
+from middleware.rate_limiter import limiter, READ_LIMIT
 
 router = APIRouter()
 
@@ -44,7 +45,8 @@ class AIInsightsStatus(BaseModel):
 
 
 @router.get("/ai/status", response_model=AIInsightsStatus)
-async def get_ai_status():
+@limiter.limit(READ_LIMIT)  # 100 requests per minute
+async def get_ai_status(request: Request):
     """Get AI engine status"""
     return AIInsightsStatus(
         ai_engine_status="active",
@@ -55,7 +57,8 @@ async def get_ai_status():
 
 
 @router.get("/ai/predictions", response_model=List[ThreatPrediction])
-async def get_predictions():
+@limiter.limit(READ_LIMIT)  # 100 requests per minute
+async def get_predictions(request: Request):
     """Get AI threat predictions"""
     predictions = [
         ThreatPrediction(
@@ -98,7 +101,8 @@ async def get_predictions():
 
 
 @router.get("/ai/risk-score", response_model=RiskScore)
-async def get_risk_score():
+@limiter.limit(READ_LIMIT)  # 100 requests per minute
+async def get_risk_score(request: Request):
     """Get overall risk score"""
     return RiskScore(
         overall_score=67,
@@ -114,7 +118,8 @@ async def get_risk_score():
 
 
 @router.get("/ai/recommendations", response_model=List[AIRecommendation])
-async def get_recommendations():
+@limiter.limit(READ_LIMIT)  # 100 requests per minute
+async def get_recommendations(request: Request):
     """Get AI-generated security recommendations"""
     recommendations = [
         AIRecommendation(
@@ -170,7 +175,8 @@ async def get_recommendations():
 
 
 @router.get("/ai/patterns")
-async def get_attack_patterns():
+@limiter.limit(READ_LIMIT)  # 100 requests per minute
+async def get_patterns(request: Request):
     """Get detected attack patterns"""
     return {
         "total_patterns": 12,
@@ -205,7 +211,8 @@ async def get_attack_patterns():
 
 
 @router.get("/ai/trends")
-async def get_trends():
+@limiter.limit(READ_LIMIT)  # 100 requests per minute
+async def get_trends(request: Request):
     """Get threat trends analysis"""
     return {
         "overall_trend": "increasing",

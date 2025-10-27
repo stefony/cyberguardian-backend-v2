@@ -9,10 +9,12 @@ Provides analytics data for:
 - Overall system statistics
 """
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime, timedelta
+from fastapi import Request
+from middleware.rate_limiter import limiter, READ_LIMIT
 import sqlite3
 
 router = APIRouter()
@@ -72,7 +74,8 @@ def get_date_range(days: int = 7):
 # ============================================
 
 @router.get("/analytics/overview", response_model=OverviewStats)
-async def get_overview_stats():
+@limiter.limit(READ_LIMIT)  # 100 requests per minute
+async def get_overview_stats(request: Request):
     """
     Get overall system statistics
     
@@ -136,8 +139,9 @@ async def get_overview_stats():
         raise HTTPException(status_code=500, detail=f"Failed to get overview stats: {str(e)}")
 
 
-@router.get("/analytics/threats-timeline", response_model=List[TimelinePoint])
-async def get_threats_timeline(days: int = Query(7, ge=1, le=90)):
+@router.get("/analytics/overview", response_model=OverviewStats)
+@limiter.limit(READ_LIMIT)  # 100 requests per minute
+async def get_overview_stats(request: Request):
     """
     Get threats timeline (threats detected over time)
     
@@ -177,8 +181,9 @@ async def get_threats_timeline(days: int = Query(7, ge=1, le=90)):
         raise HTTPException(status_code=500, detail=f"Failed to get threats timeline: {str(e)}")
 
 
-@router.get("/analytics/detection-stats", response_model=List[DetectionBreakdown])
-async def get_detection_stats():
+@router.get("/analytics/overview", response_model=OverviewStats)
+@limiter.limit(READ_LIMIT)  # 100 requests per minute
+async def get_overview_stats(request: Request):
     """
     Get detection method statistics
     
@@ -220,8 +225,9 @@ async def get_detection_stats():
         raise HTTPException(status_code=500, detail=f"Failed to get detection stats: {str(e)}")
 
 
-@router.get("/analytics/honeypot-activity", response_model=List[TimelinePoint])
-async def get_honeypot_activity(days: int = Query(7, ge=1, le=90)):
+@router.get("/analytics/overview", response_model=OverviewStats)
+@limiter.limit(READ_LIMIT)  # 100 requests per minute
+async def get_overview_stats(request: Request):
     """
     Get honeypot interaction timeline
     
@@ -261,8 +267,9 @@ async def get_honeypot_activity(days: int = Query(7, ge=1, le=90)):
         raise HTTPException(status_code=500, detail=f"Failed to get honeypot activity: {str(e)}")
 
 
-@router.get("/analytics/top-threats", response_model=List[ThreatCategory])
-async def get_top_threats(limit: int = Query(5, ge=1, le=20)):
+@router.get("/analytics/overview", response_model=OverviewStats)
+@limiter.limit(READ_LIMIT)  # 100 requests per minute
+async def get_overview_stats(request: Request):
     """
     Get top threats by count
     

@@ -9,13 +9,14 @@ Provides endpoints for:
 - Detection statistics
 """
 
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, HTTPException, UploadFile, File, Request
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
 import os
 import tempfile
 from pathlib import Path
+from middleware.rate_limiter import limiter, THREAT_INTEL_LIMIT, WRITE_LIMIT
 
 # Import our real file scanner
 from core.file_scanner import FileScanner
@@ -90,7 +91,8 @@ def save_upload_file(upload_file: UploadFile) -> str:
 # ============================================
 
 @router.get("/detection/status")
-async def get_status():
+@limiter.limit(THREAT_INTEL_LIMIT)  # 60 requests per minute
+async def get_status(request: Request):
     """
     Lightweight status endpoint expected by the frontend.
     Maps internal stats to a simple status payload.
@@ -108,8 +110,9 @@ async def get_status():
         raise HTTPException(status_code=500, detail=f"Failed to get status: {str(e)}")
 
 
-@router.post("/detection/scan/upload")
-async def scan_uploaded_file(file: UploadFile = File(...)):
+@router.post("/detection/scan")
+@limiter.limit(WRITE_LIMIT)  # 30 requests per minute
+async def start_scan(request: Request, scan_type: str):
     """
     Upload and scan a file with VirusTotal
 
@@ -213,8 +216,9 @@ async def scan_uploaded_file(file: UploadFile = File(...)):
                 pass
 
 
-@router.post("/detection/scan/{scan_type}")
-async def start_scan(scan_type: str, request: Optional[ScanRequest] = None):
+@router.post("/detection/scan/upload")
+@limiter.limit(WRITE_LIMIT)  # 30 requests per minute
+async def scan_uploaded_file(request: Request, file: UploadFile = File(...)):
     """
     Start a detection scan
 
@@ -263,8 +267,12 @@ async def start_scan(scan_type: str, request: Optional[ScanRequest] = None):
 
 
 @router.get("/detection/scans", response_model=List[ScanResult])
+@limiter.limit(THREAT_INTEL_LIMIT)  # 60 requests per minute
 async def get_all_scans(
-    status: Optional[str] = None, scan_type: Optional[str] = None, limit: int = 50
+    request: Request,
+    status: Optional[str] = None, 
+    scan_type: Optional[str] = None, 
+    limit: int = 50
 ):
     """
     Get all scans with optional filters
@@ -299,8 +307,9 @@ async def get_all_scans(
         raise HTTPException(status_code=500, detail=f"Failed to get scans: {str(e)}")
 
 
-@router.get("/detection/scans/{scan_id}", response_model=ScanResult)
-async def get_scan(scan_id: int):
+@router.get("/detection/stats")
+@limiter.limit(THREAT_INTEL_LIMIT)  # 60 requests per minute
+async def get_stats(request: Request):
     """
     Get specific scan details
 
@@ -334,8 +343,9 @@ async def get_scan(scan_id: int):
         raise HTTPException(status_code=500, detail=f"Failed to get scan: {str(e)}")
 
 
-@router.get("/detection/stats", response_model=ScanStats)
-async def get_stats():
+@router.get("/detection/scans/{scan_id}", response_model=ScanResult)
+@limiter.limit(THREAT_INTEL_LIMIT)  # 60 requests per minute
+async def get_scan(request: Request, scan_id: int):
     """
     Get detection statistics
 

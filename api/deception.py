@@ -3,11 +3,12 @@ CyberGuardian AI - Deception API
 Honeypot and deception layer management
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 import random
+from middleware.rate_limiter import limiter, READ_LIMIT, WRITE_LIMIT
 
 from database.db import (
     get_honeypots as db_get_honeypots,
@@ -170,7 +171,8 @@ initialize_sample_honeypots()
 
 
 @router.get("/deception/status", response_model=DeceptionStatus)
-async def get_deception_status():
+@limiter.limit(READ_LIMIT)  # 100 requests per minute
+async def get_status(request: Request):
     """
     Get current deception layer status
     """
@@ -186,7 +188,9 @@ async def get_deception_status():
 
 
 @router.get("/deception/honeypots", response_model=List[Honeypot])
+@limiter.limit(READ_LIMIT)  # 100 requests per minute
 async def get_honeypots(
+    request: Request,
     status: Optional[str] = None,
     type: Optional[str] = None,
     limit: int = 50
@@ -204,7 +208,8 @@ async def get_honeypots(
 
 
 @router.get("/deception/honeypots/{honeypot_id}", response_model=Honeypot)
-async def get_honeypot(honeypot_id: int):
+@limiter.limit(READ_LIMIT)  # 100 requests per minute
+async def get_honeypot(request: Request, honeypot_id: int):
     """
     Get detailed information about a specific honeypot
     """
@@ -217,7 +222,8 @@ async def get_honeypot(honeypot_id: int):
 
 
 @router.post("/deception/honeypots", response_model=Honeypot)
-async def create_honeypot(honeypot: HoneypotCreate):
+@limiter.limit(WRITE_LIMIT)  # 30 requests per minute
+async def create_honeypot(request: Request, honeypot: HoneypotCreate):
     """
     Create a new honeypot
     """
@@ -235,7 +241,8 @@ async def create_honeypot(honeypot: HoneypotCreate):
 
 
 @router.post("/deception/honeypots/activate")
-async def activate_honeypot(update: HoneypotStatusUpdate):
+@limiter.limit(WRITE_LIMIT)  # 30 requests per minute
+async def activate_honeypot(request: Request, update: HoneypotStatusUpdate):
     """
     Activate a honeypot
     """
@@ -260,7 +267,8 @@ async def activate_honeypot(update: HoneypotStatusUpdate):
 
 
 @router.post("/deception/honeypots/deactivate")
-async def deactivate_honeypot(update: HoneypotStatusUpdate):
+@limiter.limit(WRITE_LIMIT)  # 30 requests per minute
+async def deactivate_honeypot(request: Request, update: HoneypotStatusUpdate):
     """
     Deactivate a honeypot
     """
@@ -285,7 +293,9 @@ async def deactivate_honeypot(update: HoneypotStatusUpdate):
 
 
 @router.get("/deception/logs", response_model=List[HoneypotLog])
+@limiter.limit(READ_LIMIT)  # 100 requests per minute
 async def get_logs(
+    request: Request,
     honeypot_id: Optional[int] = None,
     limit: int = 100
 ):
@@ -300,8 +310,9 @@ async def get_logs(
     return logs
 
 
-@router.get("/deception/stats")
-async def get_stats():
+@router.get("/deception/status", response_model=DeceptionStatus)
+@limiter.limit(READ_LIMIT)  # 100 requests per minute
+async def get_status(request: Request):
     """
     Get deception layer statistics
     """

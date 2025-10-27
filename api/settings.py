@@ -10,7 +10,7 @@ Provides endpoints for:
 - License information
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
 import json
@@ -18,6 +18,7 @@ import platform
 import psutil
 from pathlib import Path
 from datetime import datetime
+from middleware.rate_limiter import limiter, SETTINGS_LIMIT
 
 router = APIRouter()
 
@@ -106,7 +107,8 @@ def save_settings(settings: Settings) -> bool:
 # ============================================
 
 @router.get("/settings", response_model=Settings)
-async def get_settings():
+@limiter.limit(SETTINGS_LIMIT)  # 20 requests per minute
+async def get_settings(request: Request):
     """
     Get current settings
     
@@ -120,7 +122,8 @@ async def get_settings():
 
 
 @router.post("/settings", response_model=Settings)
-async def update_settings(settings: Settings):
+@limiter.limit(SETTINGS_LIMIT)  # 20 requests per minute
+async def update_settings(request: Request, settings: Settings):
     """
     Update settings
     
@@ -146,7 +149,8 @@ async def update_settings(settings: Settings):
 
 
 @router.get("/settings/system-info", response_model=SystemInfo)
-async def get_system_info():
+@limiter.limit(SETTINGS_LIMIT)  # 20 requests per minute
+async def get_system_info(request: Request):
     """
     Get system information
     
@@ -173,7 +177,8 @@ async def get_system_info():
 
 
 @router.get("/settings/license", response_model=LicenseInfo)
-async def get_license_info():
+@limiter.limit(SETTINGS_LIMIT)  # 20 requests per minute
+async def get_license_info(request: Request):
     """
     Get license information
     
@@ -202,7 +207,8 @@ async def get_license_info():
 
 
 @router.post("/settings/reset")
-async def reset_settings():
+@limiter.limit(SETTINGS_LIMIT)  # 20 requests per minute
+async def reset_settings(request: Request):
     """
     Reset settings to default
     

@@ -3,12 +3,13 @@ CyberGuardian AI - Email & Phishing Scanner API
 Real IMAP-based email scanning endpoints
 """
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, EmailStr
 from typing import List, Optional, Dict
 import os
 from datetime import datetime
 import logging
+from middleware.rate_limiter import limiter, READ_LIMIT, WRITE_LIMIT
 
 # Import EmailScanner (будем обработваме ImportError ако липсват зависимости)
 try:
@@ -94,7 +95,8 @@ def get_email_scanner() -> Optional[EmailScanner]:
 # ============================================
 
 @router.get("/emails/status")
-async def get_email_scanner_status():
+@limiter.limit(READ_LIMIT)  # 100 requests per minute
+async def get_status(request: Request):
     """
     Get email scanner status
     
@@ -116,7 +118,8 @@ async def get_email_scanner_status():
     }
 
 @router.post("/emails/test-connection")
-async def test_email_connection(config: Optional[EmailConnectionConfig] = None):
+@limiter.limit(WRITE_LIMIT)  # 30 requests per minute
+async def test_connection(request: Request):
     """
     Test email connection
     
@@ -163,7 +166,8 @@ async def test_email_connection(config: Optional[EmailConnectionConfig] = None):
         raise HTTPException(status_code=500, detail=f"Connection failed: {str(e)}")
 
 @router.post("/emails/scan", response_model=List[EmailScanResponse])
-async def scan_emails(request: EmailScanRequest):
+@limiter.limit(WRITE_LIMIT)  # 30 requests per minute
+async def scan_emails(request: Request):
     """
     Scan emails for phishing
     
@@ -208,7 +212,8 @@ async def scan_emails(request: EmailScanRequest):
         raise HTTPException(status_code=500, detail=f"Scan failed: {str(e)}")
 
 @router.get("/emails/folders")
-async def get_email_folders():
+@limiter.limit(READ_LIMIT)  # 100 requests per minute
+async def get_folders(request: Request):
     """
     Get available email folders
     
@@ -248,8 +253,9 @@ async def get_email_folders():
         logger.error(f"Failed to get folders: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/emails/stats", response_model=EmailStatsResponse)
-async def get_email_stats():
+@router.get("/emails/status")
+@limiter.limit(READ_LIMIT)  # 100 requests per minute
+async def get_status(request: Request):
     """
     Get email scanning statistics
     
@@ -266,7 +272,8 @@ async def get_email_stats():
     )
 
 @router.get("/emails/recent-scans")
-async def get_recent_scans(limit: int = 20):
+@limiter.limit(READ_LIMIT)  # 100 requests per minute
+async def get_recent_scans(request: Request, limit: int = 20):
     """
     Get recent email scan results
     
@@ -307,7 +314,8 @@ SAMPLE_EMAIL_SCAN = {
 }
 
 @router.get("/emails/sample")
-async def get_sample_scan():
+@limiter.limit(READ_LIMIT)  # 100 requests per minute
+async def get_sample_scan(request: Request):
     """
     Get sample email scan result (for testing/demo)
     

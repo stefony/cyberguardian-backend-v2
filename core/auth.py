@@ -1,46 +1,40 @@
 """
-JWT Authentication & Password Hashing
+Authentication utilities with Argon2 password hashing
+Argon2 is more modern and has no password length limits
 """
 
-from datetime import datetime, timedelta
-from typing import Optional
-from jose import JWTError, jwt
 from passlib.context import CryptContext
+from datetime import datetime, timedelta
+from jose import JWTError, jwt
 import os
 
-# JWT Configuration
-SECRET_KEY = os.getenv("JWT_SECRET_KEY")
-if not SECRET_KEY:
-    raise ValueError("JWT_SECRET_KEY must be set in .env file")
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
+# Password hashing context - using Argon2 (modern, secure, no length limits)
+pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
-# Password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# JWT settings
+SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
 
 
 def hash_password(password: str) -> str:
-    """Hash a password using bcrypt"""
-    # Truncate password to 72 bytes for bcrypt compatibility
-    password_bytes = password.encode('utf-8')[:72]
-    return pwd_context.hash(password_bytes.decode('utf-8'))
+    """
+    Hash a password using Argon2
+    No length limits, more secure than bcrypt
+    """
+    return pwd_context.hash(password)
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a password against its hash"""
+    """
+    Verify a password against a hashed password
+    """
     return pwd_context.verify(plain_password, hashed_password)
 
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+def create_access_token(data: dict, expires_delta: timedelta = None) -> str:
     """
     Create JWT access token
-    
-    Args:
-        data: Dictionary with user data (typically user_id, email)
-        expires_delta: Optional custom expiration time
-    
-    Returns:
-        Encoded JWT token string
     """
     to_encode = data.copy()
     
@@ -55,29 +49,13 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     return encoded_jwt
 
 
-def decode_access_token(token: str) -> Optional[dict]:
+def decode_access_token(token: str) -> dict:
     """
     Decode and verify JWT token
-    
-    Returns:
-        Decoded token payload or None if invalid
+    Returns payload if valid, None if invalid/expired
     """
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         return payload
     except JWTError:
         return None
-
-
-def get_current_user_id(token: str) -> Optional[str]:
-    """
-    Extract user_id from JWT token
-    
-    Returns:
-        user_id or None if invalid token
-    """
-    payload = decode_access_token(token)
-    if payload is None:
-        return None
-    
-    return payload.get("user_id")
