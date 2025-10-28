@@ -20,6 +20,12 @@ from api.auth import router as auth_router
 from contextlib import asynccontextmanager
 from api.websocket import router as websocket_router
 
+# ============================================
+# ПРОМЯНА 1: Import Logging
+# ============================================
+from core.logger import setup_logging, get_logger
+from middleware.logging_middleware import LoggingMiddleware
+
 # Import Rate Limiting
 from middleware.rate_limiter import limiter, rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -27,10 +33,17 @@ from slowapi.errors import RateLimitExceeded
 # Initialize admin user on startup
 from database.init_admin import init_admin_user
 
+# ============================================
+# ПРОМЯНА 2: Setup Logging (ПРЕДИ app creation)
+# ============================================
+logger = setup_logging(level="INFO")
+app_logger = get_logger(__name__)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan events"""
     # Startup
+    app_logger.info("🚀 Starting CyberGuardian AI Backend...")
     print("🚀 Starting CyberGuardian AI Backend...")
     print("🛡️  Rate Limiting: ENABLED")
     print("   🔐 Auth: 5 req/15min")
@@ -40,7 +53,10 @@ async def lifespan(app: FastAPI):
     init_admin_user()
     yield
     # Shutdown
+    app_logger.info("👋 Shutting down...")
     print("👋 Shutting down...")
+    
+    
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -49,6 +65,11 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+
+# ============================================
+# ПРОМЯНА 3: Add Logging Middleware (ПЪРВО, преди всички други)
+# ============================================
+app.add_middleware(LoggingMiddleware)
 
 # ============================================
 # Add Rate Limiting to App
@@ -97,7 +118,7 @@ async def root():
     return {
         "message": "CyberGuardian AI API",
         "version": "1.0.0",
-        "status": "✅ Protected with Rate Limiting",
+        "status": "✅ Protected with Rate Limiting & Logging",
         "docs": "/docs",
         "health": "/api/health",
         "threats": "/api/threats",
