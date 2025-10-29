@@ -19,6 +19,8 @@ from api import threats, detection, deception, honeypots, ml, ai_insights, analy
 from api.auth import router as auth_router
 from contextlib import asynccontextmanager
 from api.websocket import router as websocket_router
+from api.google_oauth import router as google_oauth_router
+
 
 # ============================================
 # ПРОМЯНА 1: Import Logging
@@ -112,6 +114,8 @@ app.include_router(emails_router, prefix="/api", tags=["Email Scanner"])
 app.include_router(honeypots_router, prefix="/api", tags=["Honeypots"])
 app.include_router(ml_router, prefix="/api", tags=["Machine Learning"])
 app.include_router(websocket_router, tags=["WebSocket"])  # No prefix for WebSocket
+app.include_router(google_oauth_router, prefix="/api", tags=["Auth"])
+
 
 @app.get("/")
 async def root():
