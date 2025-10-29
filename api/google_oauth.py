@@ -8,11 +8,13 @@ router = APIRouter()
 GOOGLE_AUTH_BASE = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 
-# Използваме readonly обхват (безопасно)
-DEFAULT_SCOPES = os.getenv(
-    "GOOGLE_SCOPES",
+# ✅ Правилни minimal scopes за read-only Gmail + User Profile
+SCOPES = [
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
     "https://www.googleapis.com/auth/gmail.readonly"
-)
+]
 
 CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
@@ -25,28 +27,30 @@ def _check_env():
 @router.get("/auth/google/login")
 async def google_login(request: Request):
     """
-    Генерира OAuth2 URL и пренасочва потребителя към Google.
+    Генерира OAuth2 URL и връща линк за пренасочване на потребителя към Google.
     """
     _check_env()
+
     params = {
         "client_id": CLIENT_ID,
         "redirect_uri": REDIRECT_URI,
         "response_type": "code",
-        "scope": DEFAULT_SCOPES,
+        "scope": " ".join(SCOPES),  # <-- важно
         "access_type": "offline",
-        "prompt": "consent",  # за да получим refresh_token
+        "prompt": "consent",
         "include_granted_scopes": "true",
     }
+
     url = f"{GOOGLE_AUTH_BASE}?{urlencode(params)}"
     return {"auth_url": url}
 
 @router.get("/auth/google/callback")
 async def google_callback(request: Request, code: str = "", error: str = ""):
     """
-    Получава ?code=... от Google и обменя за access/refresh token.
-    (Връща JSON за тест; по-късно ще го запазим в DB/сесия.)
+    Получава ?code=... от Google и обменя за access/refresh токен.
     """
     _check_env()
+
     if error:
         raise HTTPException(status_code=400, detail=f"OAuth error: {error}")
     if not code:
@@ -59,12 +63,14 @@ async def google_callback(request: Request, code: str = "", error: str = ""):
         "redirect_uri": REDIRECT_URI,
         "grant_type": "authorization_code",
     }
+
     resp = requests.post(GOOGLE_TOKEN_URL, data=data, timeout=20)
+
     if resp.status_code != 200:
         raise HTTPException(status_code=400, detail=f"Token exchange failed: {resp.text}")
 
     tokens = resp.json()
-    # За сега – връщаме токените обратно (само за тест). После ще ги пазим сигурно.
+
     return {
         "received_at": int(time.time()),
         "tokens": {
