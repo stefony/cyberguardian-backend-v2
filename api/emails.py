@@ -72,7 +72,7 @@ def get_email_scanner() -> Optional["EmailScanner"]:
     server = os.getenv("EMAIL_IMAP_HOST", os.getenv("EMAIL_SERVER", "imap.gmail.com"))
     port = int(os.getenv("EMAIL_IMAP_PORT", os.getenv("EMAIL_PORT", 993)))
     username = os.getenv("EMAIL_USER", os.getenv("EMAIL_USERNAME", ""))
-    password = os.getenv("EMAIL_PASSWORD", ""))
+    password = os.getenv("EMAIL_PASSWORD", "")
     use_ssl = (os.getenv("EMAIL_IMAP_USE_SSL", os.getenv("EMAIL_USE_SSL", "true")) or "true").lower() == "true"
 
     if not username or not password:
