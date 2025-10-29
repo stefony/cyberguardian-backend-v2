@@ -73,7 +73,7 @@ def get_date_range(days: int = 7):
 # API ENDPOINTS
 # ============================================
 
-@router.get("/analytics/overview", response_model=OverviewStats)
+@router.get("/overview", response_model=OverviewStats)
 @limiter.limit(READ_LIMIT)  # 100 requests per minute
 async def get_overview_stats(request: Request):
     """
@@ -139,25 +139,18 @@ async def get_overview_stats(request: Request):
         raise HTTPException(status_code=500, detail=f"Failed to get overview stats: {str(e)}")
 
 
-@router.get("/analytics/overview", response_model=OverviewStats)
-@limiter.limit(READ_LIMIT)  # 100 requests per minute
-async def get_overview_stats(request: Request):
+@router.get("/threats-timeline", response_model=List[TimelinePoint])
+@limiter.limit(READ_LIMIT)
+async def get_threats_timeline(request: Request, days: int = Query(7, ge=1, le=90)):
     """
     Get threats timeline (threats detected over time)
-    
-    Args:
-        days: Number of days to look back (1-90)
-    
-    Returns:
-        List of timeline points with date and count
     """
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         start_date, end_date = get_date_range(days)
-        
-        # Query threats grouped by date
+
         query = """
             SELECT DATE(timestamp) as date, COUNT(*) as count
             FROM threats
@@ -165,85 +158,82 @@ async def get_overview_stats(request: Request):
             GROUP BY DATE(timestamp)
             ORDER BY date ASC
         """
-        
+
         cursor.execute(query, (start_date, end_date))
         results = cursor.fetchall()
-        conn.close()
-        
+
         timeline = [
             TimelinePoint(date=row['date'], count=row['count'])
             for row in results
         ]
-        
+
         return timeline
-        
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get threats timeline: {str(e)}")
+    finally:
+        try:
+            conn.close()
+        except:
+            pass
 
 
-@router.get("/analytics/overview", response_model=OverviewStats)
-@limiter.limit(READ_LIMIT)  # 100 requests per minute
-async def get_overview_stats(request: Request):
+
+@router.get("/detection-stats", response_model=List[DetectionBreakdown])
+@limiter.limit(READ_LIMIT)
+async def get_detection_stats(request: Request):
     """
     Get detection method statistics
-    
-    Returns breakdown of detections by method (signature, behavioral, ML, etc.)
     """
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
-        # Query scans grouped by scan_type
+
         query = """
             SELECT scan_type as method, COUNT(*) as count
             FROM scans
             GROUP BY scan_type
         """
-        
+
         cursor.execute(query)
         results = cursor.fetchall()
-        
-        # Calculate total and percentages
-        total = sum(row['count'] for row in results)
-        
-        breakdown = []
-        for row in results:
-            count = row['count']
-            percentage = (count / total * 100) if total > 0 else 0
-            breakdown.append(
-                DetectionBreakdown(
-                    method=row['method'],
-                    count=count,
-                    percentage=round(percentage, 2)
-                )
+
+        total = sum(row["count"] for row in results)
+
+        breakdown = [
+            DetectionBreakdown(
+                method=row["method"],
+                count=row["count"],
+                percentage=round((row["count"] / total * 100), 2) if total > 0 else 0
             )
-        
-        conn.close()
+            for row in results
+        ]
+
         return breakdown
-        
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get detection stats: {str(e)}")
 
+    finally:
+        try:
+            conn.close()
+        except:
+            pass
 
-@router.get("/analytics/overview", response_model=OverviewStats)
-@limiter.limit(READ_LIMIT)  # 100 requests per minute
-async def get_overview_stats(request: Request):
+
+
+@router.get("/honeypot-activity", response_model=List[TimelinePoint])
+@limiter.limit(READ_LIMIT)
+async def get_honeypot_activity(request: Request, days: int = Query(7, ge=1, le=90)):
     """
     Get honeypot interaction timeline
-    
-    Args:
-        days: Number of days to look back (1-90)
-    
-    Returns:
-        List of timeline points showing interactions over time
     """
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         start_date, end_date = get_date_range(days)
-        
-        # Query honeypot logs grouped by date
+
         query = """
             SELECT DATE(timestamp) as date, COUNT(*) as count
             FROM honeypot_logs
@@ -251,39 +241,38 @@ async def get_overview_stats(request: Request):
             GROUP BY DATE(timestamp)
             ORDER BY date ASC
         """
-        
+
         cursor.execute(query, (start_date, end_date))
         results = cursor.fetchall()
-        conn.close()
-        
+
         activity = [
-            TimelinePoint(date=row['date'], count=row['count'])
+            TimelinePoint(date=row["date"], count=row["count"])
             for row in results
         ]
-        
+
         return activity
-        
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get honeypot activity: {str(e)}")
 
+    finally:
+        try:
+            conn.close()
+        except:
+            pass
 
-@router.get("/analytics/overview", response_model=OverviewStats)
-@limiter.limit(READ_LIMIT)  # 100 requests per minute
-async def get_overview_stats(request: Request):
+
+
+@router.get("/top-threats", response_model=List[ThreatCategory])
+@limiter.limit(READ_LIMIT)
+async def get_top_threats(request: Request, limit: int = Query(5, ge=1, le=20)):
     """
     Get top threats by count
-    
-    Args:
-        limit: Number of top threats to return (1-20)
-    
-    Returns:
-        List of threat categories with counts
     """
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
-        # Query top threat types
+
         query = """
             SELECT threat_type as category, severity, COUNT(*) as count
             FROM threats
@@ -291,21 +280,26 @@ async def get_overview_stats(request: Request):
             ORDER BY count DESC
             LIMIT ?
         """
-        
+
         cursor.execute(query, (limit,))
         results = cursor.fetchall()
-        conn.close()
-        
+
         top_threats = [
             ThreatCategory(
-                category=row['category'],
-                count=row['count'],
-                severity=row['severity']
+                category=row["category"],
+                count=row["count"],
+                severity=row["severity"]
             )
             for row in results
         ]
-        
+
         return top_threats
-        
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get top threats: {str(e)}")
+
+    finally:
+        try:
+            conn.close()
+        except:
+            pass
