@@ -9,6 +9,9 @@ from typing import List, Optional, Dict
 import logging
 from middleware.rate_limiter import limiter, READ_LIMIT, WRITE_LIMIT
 
+# 🔎 training data probe
+from core.data_probe import probe_training_file
+
 # Import ML Engine
 try:
     from core.ml_engine import get_ml_engine
@@ -66,6 +69,12 @@ class ModelStatusResponse(BaseModel):
     feature_count: int
     features: List[str]
 
+    # Diagnostics (optional)
+    training_data_present: Optional[bool] = None
+    training_data_lines: Optional[int] = None
+    training_data_size: Optional[int] = None
+    training_data_path: Optional[str] = None
+
 class TrainingRequest(BaseModel):
     """Model training request"""
     n_clusters: int = 3
@@ -89,37 +98,71 @@ class TrainingResponse(BaseModel):
 @limiter.limit(READ_LIMIT)  # 100 requests per minute
 async def get_ml_status(request: Request):
     """
-    Get ML model status and metadata
-    
-    Returns current training status, feature information, and model availability
+    Get ML model status and metadata + training data diagnostics
     """
+    # Диагностика за training файла (работи независимо от ML)
+    diag = probe_training_file()  # CG_TRAINING_PATH или data/training_logs.jsonl
+
     if not ML_AVAILABLE:
-        raise HTTPException(status_code=503, detail="ML engine not available")
-    
+        # Връщаме базов статус + диагностика, за да е полезно дори без ML Engine
+        return ModelStatusResponse(
+            model_trained=False,
+            training_date=None,
+            training_samples=0,
+            anomaly_detector_available=False,
+            behavior_clusterer_available=False,
+            feature_count=0,
+            features=[],
+            training_data_present=diag.get("present"),
+            training_data_lines=diag.get("line_count"),
+            training_data_size=diag.get("size_bytes"),
+            training_data_path=diag.get("path"),
+        )
+
     try:
         engine = get_ml_engine()
-        status = engine.get_model_status()
+        status: Dict = engine.get_model_status()
+
+        # Инжектираме диагностиката в отговора
+        status.update({
+            "training_data_present": diag.get("present"),
+            "training_data_lines": diag.get("line_count"),
+            "training_data_size": diag.get("size_bytes"),
+            "training_data_path": diag.get("path"),
+        })
+
         return ModelStatusResponse(**status)
+
     except Exception as e:
         logger.error(f"Failed to get ML status: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        # Дори при грешка – върни диагностика
+        return ModelStatusResponse(
+            model_trained=False,
+            training_date=None,
+            training_samples=0,
+            anomaly_detector_available=False,
+            behavior_clusterer_available=False,
+            feature_count=0,
+            features=[],
+            training_data_present=diag.get("present"),
+            training_data_lines=diag.get("line_count"),
+            training_data_size=diag.get("size_bytes"),
+            training_data_path=diag.get("path"),
+        )
 
 @router.post("/ml/train", response_model=TrainingResponse)
 @limiter.limit(WRITE_LIMIT)  # 30 requests per minute
-async def train_models(request: Request,  # <-- ВАЖНО: името трябва да е 'request' за slowapi
-                       background_tasks: BackgroundTasks,
-                       request_body: TrainingRequest):
+async def train_models(
+    request: Request,                      # ВАЖНО: първи параметър да е 'request' (slowapi)
+    background_tasks: BackgroundTasks,
+    request_body: TrainingRequest,
+):
     """
     Train ML models on available data
-    
-    Args:
-        request_body: Training parameters (n_clusters, contamination)
-    
-    Trains Anomaly Detection and Behavioral Analysis models
     """
     if not ML_AVAILABLE:
         raise HTTPException(status_code=503, detail="ML engine not available")
-    
+
     try:
         engine = get_ml_engine()
 
@@ -152,7 +195,7 @@ async def predict_anomaly(request: Request, log: LogEntry):
     """
     if not ML_AVAILABLE:
         raise HTTPException(status_code=503, detail="ML engine not available")
-    
+
     try:
         engine = get_ml_engine()
         log_dict = log.dict()
@@ -174,7 +217,7 @@ async def analyze_behavior(request: Request, log: LogEntry):
     """
     if not ML_AVAILABLE:
         raise HTTPException(status_code=503, detail="ML engine not available")
-    
+
     try:
         engine = get_ml_engine()
         log_dict = log.dict()
@@ -196,7 +239,7 @@ async def calculate_threat_score(request: Request, log: LogEntry):
     """
     if not ML_AVAILABLE:
         raise HTTPException(status_code=503, detail="ML engine not available")
-    
+
     try:
         engine = get_ml_engine()
         log_dict = log.dict()
@@ -218,7 +261,7 @@ async def batch_threat_scores(request: Request, logs: List[LogEntry]):
     """
     if not ML_AVAILABLE:
         raise HTTPException(status_code=503, detail="ML engine not available")
-    
+
     try:
         engine = get_ml_engine()
         results = []
