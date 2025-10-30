@@ -1,10 +1,11 @@
 """
 CyberGuardian AI - FastAPI Backend
-Main application entry point with Rate Limiting
+Main application entry point with Rate Limiting & Robust CORS
 """
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
 from api.health import router as health_router
 from api.threats import router as threats_router
 from api.detection import router as detection_router
@@ -21,14 +22,13 @@ from contextlib import asynccontextmanager
 from api.websocket import router as websocket_router
 from api.google_oauth import router as google_oauth_router
 
-
 # ============================================
-# ПРОМЯНА 1: Import Logging
+# Logging (set up BEFORE app creation)
 # ============================================
 from core.logger import setup_logging, get_logger
 from middleware.logging_middleware import LoggingMiddleware
 
-# Import Rate Limiting
+# Rate Limiting
 from middleware.rate_limiter import limiter, rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
@@ -36,7 +36,7 @@ from slowapi.errors import RateLimitExceeded
 from database.init_admin import init_admin_user
 
 # ============================================
-# ПРОМЯНА 2: Setup Logging (ПРЕДИ app creation)
+# Setup Logging (BEFORE app creation)
 # ============================================
 logger = setup_logging(level="INFO")
 app_logger = get_logger(__name__)
@@ -57,8 +57,6 @@ async def lifespan(app: FastAPI):
     # Shutdown
     app_logger.info("👋 Shutting down...")
     print("👋 Shutting down...")
-    
-    
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -69,40 +67,56 @@ app = FastAPI(
 )
 
 # ============================================
-# ПРОМЯНА 3: Add Logging Middleware (ПЪРВО, преди всички други)
+# CORS MUST BE FIRST (before any other middleware)
+# Expanded (Dev + Prod + Preview + Future clients)
+# ============================================
+ALLOWED_ORIGINS = [
+    # Local dev
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://localhost:8000",
+
+    # Production / Preview Frontends
+    "https://cyberguardian-dashboard.vercel.app",
+    "https://cyberguardian-dashboard-git-main-stefonys-projects.vercel.app",
+    "https://cyberguardian-dashboard-novx7ny4q-stefonys-projects.vercel.app",
+
+    # (Optional) add a custom domain here when you bind one, e.g.:
+    # "https://app.cyberguardian.ai",
+]
+
+# NOTE:
+# - We keep strict explicit origins for main apps (security)
+# - PLUS a regex to allow all *.vercel.app preview deploys (DX flexibility)
+# - If you want to lock it down later, remove the regex.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ============================================
+# Other middlewares (AFTER CORS)
 # ============================================
 app.add_middleware(LoggingMiddleware)
 
-# ============================================
-# Add Rate Limiting to App
-# ============================================
+# Rate Limiting
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
-# CORS Configuration - allow frontend to communicate with backend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",  # Next.js dev server
-        "http://localhost:3001",
-        "http://localhost:8000",  # Backend
-        "https://cyberguardian-dashboard.vercel.app",  # Production frontend
-        "https://cyberguardian-dashboard-git-main-stefonys-projects.vercel.app",  # Git branch deploys
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],  # Allow all methods (GET, POST, etc.)
-    allow_headers=["*"],  # Allow all headers
-    allow_origin_regex=r"https://.*\.vercel\.app",  # All Vercel domains
-)
-
-# Include routers
+# ============================================
+# Routers
+# ============================================
 # Health check - NO rate limit
 app.include_router(health_router, prefix="/api", tags=["Health"])
 
 # Authentication - STRICT rate limit (applied in auth.py router)
 app.include_router(auth_router, prefix="/api", tags=["Authentication"])
 
-# Threats, Detection, Deception - Rate limited (applied in respective routers)
+# Feature routers
 app.include_router(threats_router, prefix="/api", tags=["Threats"])
 app.include_router(detection_router, prefix="/api", tags=["Detection"])
 app.include_router(deception_router, prefix="/api", tags=["Deception"])
@@ -110,13 +124,15 @@ app.include_router(ai_insights_router, prefix="/api", tags=["AI Insights"])
 app.include_router(analytics_router, prefix="/api/analytics", tags=["Analytics"])
 app.include_router(emails_router, prefix="/api/emails", tags=["Emails"])
 app.include_router(settings_router, prefix="/api", tags=["Settings"])
-app.include_router(emails_router, prefix="/api", tags=["Email Scanner"])
+app.include_router(emails_router, prefix="/api", tags=["Email Scanner"])  # (dup group tag OK)
 app.include_router(honeypots_router, prefix="/api", tags=["Honeypots"])
 app.include_router(ml_router, prefix="/api", tags=["Machine Learning"])
 app.include_router(websocket_router, tags=["WebSocket"])  # No prefix for WebSocket
 app.include_router(google_oauth_router, prefix="/api", tags=["Auth"])
 
-
+# ============================================
+# Root
+# ============================================
 @app.get("/")
 async def root():
     """Root endpoint - API info"""
@@ -145,6 +161,6 @@ if __name__ == "__main__":
         "main:app",
         host="0.0.0.0",
         port=8000,
-        reload=True,  # Auto-reload on code changes
+        reload=True,
         log_level="info"
     )
