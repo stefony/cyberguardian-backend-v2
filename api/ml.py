@@ -99,21 +99,21 @@ async def get_ml_status(request: Request):
     try:
         engine = get_ml_engine()
         status = engine.get_model_status()
-        
         return ModelStatusResponse(**status)
-    
     except Exception as e:
         logger.error(f"Failed to get ML status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/ml/train", response_model=TrainingResponse)
 @limiter.limit(WRITE_LIMIT)  # 30 requests per minute
-async def train_models(http_request: Request, request: TrainingRequest, background_tasks: BackgroundTasks):
+async def train_models(request: Request,  # <-- ВАЖНО: името трябва да е 'request' за slowapi
+                       background_tasks: BackgroundTasks,
+                       request_body: TrainingRequest):
     """
     Train ML models on available data
     
     Args:
-        request: Training parameters (n_clusters, contamination)
+        request_body: Training parameters (n_clusters, contamination)
     
     Trains Anomaly Detection and Behavioral Analysis models
     """
@@ -122,57 +122,44 @@ async def train_models(http_request: Request, request: TrainingRequest, backgrou
     
     try:
         engine = get_ml_engine()
-        
+
         # Train in background
         def train_task():
             results = engine.train_models(
-                n_clusters=request.n_clusters,
-                contamination=request.contamination
+                n_clusters=request_body.n_clusters,
+                contamination=request_body.contamination
             )
             logger.info(f"Training completed: {results}")
-        
+
         background_tasks.add_task(train_task)
-        
+
         return TrainingResponse(
             success=True,
             training_samples=0,
-            n_clusters=request.n_clusters,
+            n_clusters=request_body.n_clusters,
             error=None
         )
-    
+
     except Exception as e:
         logger.error(f"Failed to start training: {e}")
-        return TrainingResponse(
-            success=False,
-            error=str(e)
-        )
+        return TrainingResponse(success=False, error=str(e))
 
 @router.post("/ml/predict/anomaly", response_model=AnomalyPredictionResponse)
 @limiter.limit(WRITE_LIMIT)  # 30 requests per minute
 async def predict_anomaly(request: Request, log: LogEntry):
     """
     Predict if a log entry is anomalous
-    
-    Args:
-        log: Log entry to analyze
-    
-    Returns:
-        Anomaly prediction with score and confidence
     """
     if not ML_AVAILABLE:
         raise HTTPException(status_code=503, detail="ML engine not available")
     
     try:
         engine = get_ml_engine()
-        
         log_dict = log.dict()
         result = engine.predict_anomaly(log_dict)
-        
         if 'error' in result:
             raise HTTPException(status_code=400, detail=result['error'])
-        
         return AnomalyPredictionResponse(**result)
-    
     except HTTPException:
         raise
     except Exception as e:
@@ -184,27 +171,17 @@ async def predict_anomaly(request: Request, log: LogEntry):
 async def analyze_behavior(request: Request, log: LogEntry):
     """
     Analyze behavioral patterns in log entry
-    
-    Args:
-        log: Log entry to analyze
-    
-    Returns:
-        Behavior cluster classification
     """
     if not ML_AVAILABLE:
         raise HTTPException(status_code=503, detail="ML engine not available")
     
     try:
         engine = get_ml_engine()
-        
         log_dict = log.dict()
         result = engine.analyze_behavior(log_dict)
-        
         if 'error' in result:
             raise HTTPException(status_code=400, detail=result['error'])
-        
         return BehaviorAnalysisResponse(**result)
-    
     except HTTPException:
         raise
     except Exception as e:
@@ -216,27 +193,17 @@ async def analyze_behavior(request: Request, log: LogEntry):
 async def calculate_threat_score(request: Request, log: LogEntry):
     """
     Calculate comprehensive threat score
-    
-    Args:
-        log: Log entry to analyze
-    
-    Returns:
-        Threat score (0-100), level, and detailed analysis
     """
     if not ML_AVAILABLE:
         raise HTTPException(status_code=503, detail="ML engine not available")
     
     try:
         engine = get_ml_engine()
-        
         log_dict = log.dict()
         result = engine.calculate_threat_score(log_dict)
-        
         if 'error' in result:
             raise HTTPException(status_code=400, detail=result['error'])
-        
         return ThreatScoreResponse(**result)
-    
     except HTTPException:
         raise
     except Exception as e:
@@ -248,30 +215,18 @@ async def calculate_threat_score(request: Request, log: LogEntry):
 async def batch_threat_scores(request: Request, logs: List[LogEntry]):
     """
     Calculate threat scores for multiple logs
-    
-    Args:
-        logs: List of log entries
-    
-    Returns:
-        List of threat scores
     """
     if not ML_AVAILABLE:
         raise HTTPException(status_code=503, detail="ML engine not available")
     
     try:
         engine = get_ml_engine()
-        
         results = []
         for log in logs:
             log_dict = log.dict()
             score = engine.calculate_threat_score(log_dict)
             results.append(score)
-        
-        return {
-            'total': len(results),
-            'scores': results
-        }
-    
+        return {'total': len(results), 'scores': results}
     except Exception as e:
         logger.error(f"Failed to calculate batch scores: {e}")
         raise HTTPException(status_code=500, detail=str(e))
