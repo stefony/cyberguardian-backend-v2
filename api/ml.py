@@ -153,12 +153,15 @@ async def get_ml_status(request: Request):
 @router.post("/ml/train", response_model=TrainingResponse)
 @limiter.limit(WRITE_LIMIT)  # 30 requests per minute
 async def train_models(
-    request: Request,                      # ВАЖНО: първи параметър да е 'request' (slowapi)
+    request: Request,                      # важно за slowapi
     background_tasks: BackgroundTasks,
     request_body: TrainingRequest,
+    sync: bool = False                     # <─ нов параметър: ?sync=1 за блокиращо обучение
 ):
     """
-    Train ML models on available data
+    Train ML models on available data.
+    If sync=1 is passed as query param, training runs synchronously and returns the actual results.
+    Otherwise it schedules a background task and returns immediately.
     """
     if not ML_AVAILABLE:
         raise HTTPException(status_code=503, detail="ML engine not available")
@@ -166,16 +169,33 @@ async def train_models(
     try:
         engine = get_ml_engine()
 
-        # Train in background
-        def train_task():
+        def do_train():
+            try:
+                results = engine.train_models(
+                    n_clusters=request_body.n_clusters,
+                    contamination=request_body.contamination
+                )
+                logger.info(f"[ML] Training completed: {results}")
+            except Exception as e:
+                logger.exception(f"[ML] Training failed: {e}")
+
+        if sync:
             results = engine.train_models(
                 n_clusters=request_body.n_clusters,
                 contamination=request_body.contamination
             )
-            logger.info(f"Training completed: {results}")
+            return TrainingResponse(
+                success=True,
+                training_samples=results.get("training_samples", 0),
+                n_clusters=results.get("n_clusters"),
+                silhouette_score=results.get("silhouette_score"),
+                mean_anomaly_score=results.get("mean_anomaly_score"),
+                training_date=results.get("training_date"),
+                error=None
+            )
 
-        background_tasks.add_task(train_task)
-
+        # async (background) path
+        background_tasks.add_task(do_train)
         return TrainingResponse(
             success=True,
             training_samples=0,
@@ -186,6 +206,7 @@ async def train_models(
     except Exception as e:
         logger.error(f"Failed to start training: {e}")
         return TrainingResponse(success=False, error=str(e))
+
 
 @router.post("/ml/predict/anomaly", response_model=AnomalyPredictionResponse)
 @limiter.limit(WRITE_LIMIT)  # 30 requests per minute

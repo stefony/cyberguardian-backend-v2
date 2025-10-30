@@ -4,7 +4,8 @@ import re
 import math
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import List, Dict, Any
 
 import numpy as np
 import pandas as pd
@@ -16,13 +17,16 @@ from sklearn.metrics import silhouette_score
 log = logging.getLogger("ml_engine")
 
 
+# ------------------------ Utilities ------------------------ #
 def _entropy(s: str) -> float:
+    """Shannon entropy of a (possibly long) string."""
     if not s:
         return 0.0
-    # ограничаваме до разумен размер, за да не взривим паметта при ботове
-    s = str(s)
-    s = s[:2048]
-    probs = [float(s.count(c)) / len(s) for c in set(s)]
+    s = str(s)[:2048]  # cap for safety
+    length = len(s)
+    if length == 0:
+        return 0.0
+    probs = [float(s.count(c)) / length for c in set(s)]
     return -sum(p * math.log2(p) for p in probs if p > 0)
 
 
@@ -31,44 +35,58 @@ XSS_PAT = re.compile(r"(<script>|onerror=|javascript:|alert\()", re.IGNORECASE)
 LFI_PAT = re.compile(r"(\.\./\.\.|/etc/passwd|/proc/self)", re.IGNORECASE)
 ADMIN_PAT = re.compile(r"(/admin|/wp-login\.php|/login)", re.IGNORECASE)
 
-# за прост „geo-risk“, държави с по-честа злонамерена активност (примерно)
-GEO_RISK = {
+# Simplified geo risk map (example)
+GEO_RISK: Dict[str, float] = {
     "RU": 0.9, "CN": 0.8, "IR": 0.7, "KP": 0.7,
     "US": 0.4, "DE": 0.3, "NL": 0.3, "BG": 0.2,
 }
 
-REQUEST_MAP = {"HTTP": 0, "DNS": 1, "SMB": 2, "SSH": 3, "OTHER": 4}
+REQUEST_MAP: Dict[str, int] = {"HTTP": 0, "DNS": 1, "SMB": 2, "SSH": 3, "OTHER": 4}
 
 
+# ------------------------ State ------------------------ #
 class _EngineState:
     def __init__(self):
-        self.model_trained = False
-        self.training_date = None
-        self.training_samples = 0
-        self.features = [
+        self.model_trained: bool = False
+        self.training_date: str | None = None
+        self.training_samples: int = 0
+        self.features: List[str] = [
             "payload_len", "payload_entropy",
             "ratio_digits", "ratio_specials",
             "has_sql", "has_xss", "has_lfi", "has_admin",
             "port_bin", "req_type",
             "geo_risk"
         ]
-        self.feature_count = len(self.features)
-        self.silhouette = None
-        self.mean_anomaly = None
-        self.n_clusters = None
-        self.anomaly_detector = None
-        self.clusterer = None
-        self.scaler = None
+        self.feature_count: int = len(self.features)
+
+        # metrics & objects
+        self.silhouette: float | None = None
+        self.mean_anomaly: float | None = None
+        self.n_clusters: int | None = None
+
+        self.anomaly_detector: IsolationForest | None = None
+        self.clusterer: KMeans | None = None
+        self.scaler: StandardScaler | None = None
 
 
+# ------------------------ Engine ------------------------ #
 class MLEngine:
+    """Simple ML engine for anomaly & behavior detection over request logs."""
+
     def __init__(self, dataset_path: str | None = None):
+        # Default to JSONL since project uses data/training_logs.jsonl
+        self.dataset_path = dataset_path or os.getenv(
+            "ML_DATASET_PATH",
+            "data/training_logs.jsonl"
+        )
         self.state = _EngineState()
-        self.dataset_path = dataset_path or os.getenv("ML_DATASET_PATH", "data/ml_training_logs.csv")
         log.info(f"[ML] Using dataset: {self.dataset_path}")
 
     # ---------- Public API (called by routes) ----------
     def get_model_status(self) -> dict:
+        # Extra info about presence of training file (for /status UI)
+        present, lines, size = self._probe_dataset_file()
+
         return {
             "model_trained": self.state.model_trained,
             "training_date": self.state.training_date,
@@ -77,61 +95,68 @@ class MLEngine:
             "behavior_clusterer_available": self.state.clusterer is not None,
             "feature_count": self.state.feature_count,
             "features": self.state.features,
+            # extras (used in your status output)
+            "training_data_present": present,
+            "training_data_lines": lines,
+            "training_data_size": size,
+            "training_data_path": self.dataset_path,
         }
 
     def train_models(self, n_clusters: int = 3, contamination: float = 0.1) -> dict:
+        """
+        Train KMeans (behavior) + IsolationForest (anomaly) on featurized dataset.
+        Fixes:
+         - uses score_samples() (not deprecated fit_score)
+         - guards against NaN from binning, casting
+        """
         df = self._load_dataset()
         if df.empty:
             log.warning("[ML] Dataset is empty")
-            self.state.model_trained = False
-            self.state.training_samples = 0
-            return {
-                "success": True,
-                "training_samples": 0,
-                "n_clusters": n_clusters,
-                "silhouette_score": None,
-                "mean_anomaly_score": None,
-                "training_date": None,
-            }
+            self._mark_untrained()
+            return self._train_result(
+                success=True, samples=0, n_clusters=n_clusters,
+                silhouette=None, mean_anomaly=None, date=None
+            )
 
         X = self._featurize(df)
-        if X.shape[0] < max(10, n_clusters + 1):
-            log.warning(f"[ML] Not enough rows to train: {X.shape[0]}")
-            self.state.model_trained = False
-            self.state.training_samples = X.shape[0]
-            return {
-                "success": True,
-                "training_samples": int(X.shape[0]),
-                "n_clusters": n_clusters,
-                "silhouette_score": None,
-                "mean_anomaly_score": None,
-                "training_date": None,
-            }
 
-        # scale
+        # Minimal safety (need at least k+1 and > 10 rows)
+        min_rows = max(10, n_clusters + 1)
+        if X.shape[0] < min_rows:
+            log.warning(f"[ML] Not enough rows to train: {X.shape[0]} (need >= {min_rows})")
+            self._mark_untrained(samples=int(X.shape[0]))
+            return self._train_result(
+                success=True, samples=int(X.shape[0]),
+                n_clusters=n_clusters, silhouette=None, mean_anomaly=None, date=None
+            )
+
+        # Scale
         scaler = StandardScaler()
         Xs = scaler.fit_transform(X)
 
-        # clustering
+        # KMeans
         kmeans = KMeans(n_clusters=n_clusters, n_init="auto", random_state=42)
         labels = kmeans.fit_predict(Xs)
 
-        # anomaly
+        # IsolationForest
         iso = IsolationForest(
             n_estimators=200,
-            contamination=min(max(contamination, 0.01), 0.4),
+            contamination=float(min(max(contamination, 0.01), 0.4)),
             random_state=42,
         )
-        anomaly_scores = -iso.fit_score(Xs)  # по-високо = по-аномално
+        iso.fit(Xs)
+        # Positive -> more normal, Negative -> more anomalous
+        # We want higher = more anomalous → invert
+        anomaly_scores = -iso.score_samples(Xs)
 
         sil = None
         try:
-            # silhouette изисква поне 2 различни етикета
             if len(set(labels)) > 1:
                 sil = float(silhouette_score(Xs, labels))
         except Exception as e:
             log.warning(f"[ML] Silhouette failed: {e}")
 
+        # Save state
         self.state.anomaly_detector = iso
         self.state.clusterer = kmeans
         self.state.scaler = scaler
@@ -140,29 +165,31 @@ class MLEngine:
         self.state.silhouette = sil
         self.state.mean_anomaly = float(np.mean(anomaly_scores)) if len(anomaly_scores) else None
         self.state.n_clusters = int(n_clusters)
-        self.state.training_date = datetime.utcnow().isoformat()
+        self.state.training_date = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
-        log.info(f"[ML] Training done: samples={self.state.training_samples}, "
-                 f"clusters={self.state.n_clusters}, silhouette={self.state.silhouette}, "
-                 f"mean_anomaly={self.state.mean_anomaly}")
+        log.info(
+            f"[ML] Training done: samples={self.state.training_samples}, "
+            f"clusters={self.state.n_clusters}, silhouette={self.state.silhouette}, "
+            f"mean_anomaly={self.state.mean_anomaly}"
+        )
 
-        return {
-            "success": True,
-            "training_samples": self.state.training_samples,
-            "n_clusters": self.state.n_clusters,
-            "silhouette_score": self.state.silhouette,
-            "mean_anomaly_score": self.state.mean_anomaly,
-            "training_date": self.state.training_date,
-        }
+        return self._train_result(
+            success=True,
+            samples=self.state.training_samples,
+            n_clusters=self.state.n_clusters,
+            silhouette=self.state.silhouette,
+            mean_anomaly=self.state.mean_anomaly,
+            date=self.state.training_date,
+        )
 
     def predict_anomaly(self, log_row: dict) -> dict:
         if not self.state.model_trained:
             return {"error": "Model not trained"}
         X = self._featurize(pd.DataFrame([log_row]))
         Xs = self.state.scaler.transform(X)
-        score = -self.state.anomaly_detector.score_samples(Xs)[0]
-        # просто доверие като нормализирана функция
-        conf = float(min(max(score / 5.0, 0.0), 1.0))
+        score = -float(self.state.anomaly_detector.score_samples(Xs)[0])  # invert so higher=worse
+        conf = float(min(max(score / 5.0, 0.0), 1.0))  # simple soft confidence
+
         return {
             "is_anomaly": bool(score > 1.0),
             "anomaly_score": float(score),
@@ -179,17 +206,54 @@ class MLEngine:
         return {"cluster": label, "cluster_name": f"Cluster {label}", "n_clusters": self.state.n_clusters}
 
     def calculate_threat_score(self, log_row: dict) -> dict:
+        """
+        Hybrid score = ML anomaly (scaled) + rule-based boosts (payload patterns + geo risk).
+        Returns 0..100 with levels.
+        """
+        # 1) ML anomaly
         an = self.predict_anomaly(log_row)
         if "error" in an:
             return an
+
+        # 2) Behavior (for display)
         beh = self.analyze_behavior(log_row)
-        base = 20.0 + 70.0 * min(max(an["anomaly_score"] / 3.0, 0.0), 1.0)
-        lvl = "LOW"
-        if base >= 80: lvl = "CRITICAL"
-        elif base >= 60: lvl = "HIGH"
-        elif base >= 40: lvl = "MEDIUM"
+
+        # 3) Rule-based signals
+        payload = str(log_row.get("payload", "") or "")
+        country = str(log_row.get("country", "") or "").upper()
+
+        rule_boost = 0.0
+        if SQL_PAT.search(payload):
+            rule_boost += 25.0
+        if XSS_PAT.search(payload):
+            rule_boost += 20.0
+        if LFI_PAT.search(payload):
+            rule_boost += 20.0
+        if ADMIN_PAT.search(payload):
+            rule_boost += 10.0
+
+        geo = GEO_RISK.get(country, 0.2)
+        if geo >= 0.7:
+            rule_boost += 10.0
+        elif geo >= 0.5:
+            rule_boost += 5.0
+
+        # 4) Combine ML + rules
+        ml_component = min(max(float(an["anomaly_score"]) * 20.0, 0.0), 100.0)
+        score = 10.0 + ml_component * 0.6 + rule_boost
+        score = float(max(0.0, min(100.0, score)))
+
+        if score >= 85:
+            lvl = "CRITICAL"
+        elif score >= 65:
+            lvl = "HIGH"
+        elif score >= 45:
+            lvl = "MEDIUM"
+        else:
+            lvl = "LOW"
+
         return {
-            "threat_score": float(round(base, 2)),
+            "threat_score": float(round(score, 2)),
             "threat_level": lvl,
             "is_anomaly": an["is_anomaly"],
             "anomaly_score": float(round(an["anomaly_score"], 4)),
@@ -197,48 +261,120 @@ class MLEngine:
             "confidence": float(round(an["confidence"], 3)),
         }
 
-    # ---------- Helpers ----------
-    def _load_dataset(self) -> pd.DataFrame:
+    # ------------------------ Helpers ------------------------ #
+    def _train_result(
+        self,
+        success: bool,
+        samples: int,
+        n_clusters: int,
+        silhouette: float | None,
+        mean_anomaly: float | None,
+        date: str | None,
+    ) -> dict:
+        return {
+            "success": success,
+            "training_samples": samples,
+            "n_clusters": n_clusters,
+            "silhouette_score": silhouette,
+            "mean_anomaly_score": mean_anomaly,
+            "training_date": date,
+            "error": None if success else "Training failed",
+        }
+
+    def _mark_untrained(self, samples: int = 0):
+        self.state.model_trained = False
+        self.state.training_samples = samples
+        self.state.anomaly_detector = None
+        self.state.clusterer = None
+        self.state.scaler = None
+        self.state.silhouette = None
+        self.state.mean_anomaly = None
+        self.state.n_clusters = None
+        self.state.training_date = None
+
+    def _probe_dataset_file(self) -> tuple[bool, int | None, int | None]:
+        """Lightweight probe for /status (does file exist, how many lines/size)."""
         path = self.dataset_path
+        if not os.path.exists(path):
+            return False, None, None
         try:
-            if not os.path.exists(path):
-                log.warning(f"[ML] Dataset not found at {path}")
-                return pd.DataFrame()
-            df = pd.read_csv(path)
-            # стандартизиране на колоните
-            expected = {"timestamp","source_ip","source_port","payload","request_type","country","city"}
+            size = os.path.getsize(path)
+            # For jsonl we can count lines quickly
+            with open(path, "rb") as f:
+                lines = sum(1 for _ in f)
+            return True, int(lines), int(size)
+        except Exception:
+            return True, None, None
+
+    def _load_dataset(self) -> pd.DataFrame:
+        """
+        Loads dataset from jsonl (preferred) or csv fallback.
+        Expected columns: timestamp, source_ip, source_port, payload, request_type, country, city
+        """
+        path = self.dataset_path
+        if not os.path.exists(path):
+            log.warning(f"[ML] Dataset not found at {path}")
+            return pd.DataFrame()
+
+        try:
+            if path.endswith(".jsonl"):
+                rows: List[Dict[str, Any]] = []
+                with open(path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            rows.append(json.loads(line))
+                        except json.JSONDecodeError:
+                            # If a row is broken, skip it (robustness)
+                            continue
+                df = pd.DataFrame(rows)
+            else:
+                # CSV fallback
+                df = pd.read_csv(path)
+
+            # Normalize & check required columns
+            expected = {"timestamp", "source_ip", "source_port", "payload", "request_type", "country", "city"}
             missing = expected - set(df.columns)
             if missing:
                 log.warning(f"[ML] Missing columns in dataset: {missing}")
                 return pd.DataFrame()
+
             return df
         except Exception as e:
             log.error(f"[ML] Failed to load dataset: {e}")
             return pd.DataFrame()
 
     def _featurize(self, df: pd.DataFrame) -> np.ndarray:
-        # безопасни стойности
+        """Converts raw log rows into numeric feature matrix."""
         df = df.copy()
-        df["payload"] = df["payload"].fillna("")
-        df["request_type"] = df["request_type"].fillna("HTTP")
-        df["country"] = df["country"].fillna("BG")
-        df["source_port"] = pd.to_numeric(df["source_port"], errors="coerce").fillna(0).astype(int)
+
+        # Safe defaults
+        df["payload"] = df.get("payload", "").fillna("").astype(str)
+        df["request_type"] = df.get("request_type", "HTTP").fillna("HTTP").astype(str)
+        df["country"] = df.get("country", "BG").fillna("BG").astype(str)
+
+        # source_port → numeric
+        df["source_port"] = pd.to_numeric(df.get("source_port", 0), errors="coerce").fillna(0).astype(int)
 
         payload = df["payload"].astype(str)
         payload_len = payload.str.len().clip(0, 4096)
         payload_entropy = payload.apply(_entropy)
 
-        def _ratio_digits(s):
+        def _ratio_digits(s: str) -> float:
             s = str(s)
-            if not s: return 0.0
+            if not s:
+                return 0.0
             cnt = sum(c.isdigit() for c in s)
-            return cnt / len(s)
+            return cnt / len(s) if len(s) else 0.0
 
-        def _ratio_specials(s):
+        def _ratio_specials(s: str) -> float:
             s = str(s)
-            if not s: return 0.0
+            if not s:
+                return 0.0
             cnt = sum((not c.isalnum()) for c in s)
-            return cnt / len(s)
+            return cnt / len(s) if len(s) else 0.0
 
         ratio_digits = payload.apply(_ratio_digits)
         ratio_specials = payload.apply(_ratio_specials)
@@ -248,20 +384,25 @@ class MLEngine:
         has_lfi = payload.str.contains(LFI_PAT).astype(int)
         has_admin = payload.str.contains(ADMIN_PAT).astype(int)
 
-        # порт биннинг
+        # Port binning; guard against NaN by using cat codes
         port = df["source_port"].astype(int)
-        port_bin = pd.cut(
+        port_categories = pd.cut(
             port,
             bins=[-1, 0, 1023, 49151, 65535],
-            labels=[0, 1, 2, 3]
-        ).astype(int)
+            labels=[0, 1, 2, 3],
+            include_lowest=True,
+            right=True,
+        )
+        # cat.codes returns -1 for NaN → map to 0
+        port_bin = port_categories.astype("category").cat.codes.replace(-1, 0).astype(int)
 
+        # Request type & geo risk
         req_type = df["request_type"].str.upper().map(REQUEST_MAP).fillna(4).astype(int)
-        geo_risk = df["country"].str.upper().map(GEO_RISK).fillna(0.2)
+        geo_risk = df["country"].str.upper().map(GEO_RISK).fillna(0.2).astype(float)
 
         feats = np.column_stack([
             payload_len.values.astype(float),
-            np.array(list(payload_entropy), dtype=float),
+            np.asarray(list(payload_entropy), dtype=float),
             ratio_digits.values.astype(float),
             ratio_specials.values.astype(float),
             has_sql.values.astype(int),
@@ -272,11 +413,13 @@ class MLEngine:
             req_type.values.astype(int),
             geo_risk.values.astype(float),
         ])
+
         return feats
 
 
 # --- Singleton accessor used by API ---
-_engine_singleton: MLEngine | None = None
+_engine_singleton: "MLEngine | None" = None
+
 
 def get_ml_engine() -> MLEngine:
     global _engine_singleton
