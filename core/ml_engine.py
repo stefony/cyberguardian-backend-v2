@@ -29,7 +29,6 @@ def _entropy(s: str) -> float:
     probs = [float(s.count(c)) / length for c in set(s)]
     return -sum(p * math.log2(p) for p in probs if p > 0)
 
-
 SQL_PAT = re.compile(r"(select|union|sleep\(|or\s+1=1|drop\s+table|--|;)", re.IGNORECASE)
 XSS_PAT = re.compile(r"(<script>|onerror=|javascript:|alert\()", re.IGNORECASE)
 LFI_PAT = re.compile(r"(\.\./\.\.|/etc/passwd|/proc/self)", re.IGNORECASE)
@@ -42,7 +41,6 @@ GEO_RISK: Dict[str, float] = {
 }
 
 REQUEST_MAP: Dict[str, int] = {"HTTP": 0, "DNS": 1, "SMB": 2, "SSH": 3, "OTHER": 4}
-
 
 # ------------------------ State ------------------------ #
 class _EngineState:
@@ -73,7 +71,6 @@ class _EngineState:
         self.anomaly_detector: IsolationForest | None = None
         self.clusterer: KMeans | None = None
         self.scaler: StandardScaler | None = None
-
 
 # ------------------------ Engine ------------------------ #
 class MLEngine:
@@ -178,14 +175,9 @@ class MLEngine:
                 X_fb = self._featurize(pd.DataFrame(ex_list))
                 X_fb_s = scaler.transform(X_fb)
 
-                # Choose a compact classifier; Logistic is fast & stable
-                clf = LogisticRegression(max_iter=200, n_jobs=None)
-                # If LogisticRegression is not available with n_jobs, remove param (older sklearn)
-                try:
-                    clf.fit(X_fb_s, y_labels)
-                except TypeError:
-                    clf = LogisticRegression(max_iter=200)
-                    clf.fit(X_fb_s, y_labels)
+                # Compact & stable classifier
+                clf = LogisticRegression(max_iter=200)
+                clf.fit(X_fb_s, y_labels)
 
                 labeled_count = len(y_labels)
                 log.info(f"[ML] Trained feedback classifier on {labeled_count} labeled rows")
@@ -288,8 +280,7 @@ class MLEngine:
                 X = self._featurize(pd.DataFrame([log_row]))
                 Xs = self.state.scaler.transform(X)
                 proba = float(self.state.classifier.predict_proba(Xs)[0][1])  # P(malicious)
-                # add a gentle boost (max +10)
-                score += min(10.0, 10.0 * proba)
+                score += min(10.0, 10.0 * proba)  # gentle boost up to +10
             except Exception:
                 pass
 
@@ -371,7 +362,6 @@ class MLEngine:
             return False, None, None
         try:
             size = os.path.getsize(path)
-            # For jsonl we can count lines quickly
             with open(path, "rb") as f:
                 lines = sum(1 for _ in f)
             return True, int(lines), int(size)
@@ -380,40 +370,66 @@ class MLEngine:
 
     def _load_dataset(self) -> pd.DataFrame:
         """
-        Loads dataset from jsonl (preferred) or csv fallback.
-        Expected columns: timestamp, source_ip, source_port, payload, request_type, country, city
+        Robust loader for jsonl/csv:
+        - Чете JSONL ред по ред и прескача повредени редове.
+        - Липсващи колони се добавят с дефолтни стойности (не връщаме празно DF).
         """
         path = self.dataset_path
         if not os.path.exists(path):
             log.warning(f"[ML] Dataset not found at {path}")
             return pd.DataFrame()
 
+        expected = {"timestamp", "source_ip", "source_port", "payload", "request_type", "country", "city"}
+        rows: list[dict] = []
+
         try:
             if path.endswith(".jsonl"):
-                rows: list[dict] = []
                 with open(path, "r", encoding="utf-8") as f:
                     for line in f:
                         line = line.strip()
                         if not line:
                             continue
                         try:
-                            rows.append(json.loads(line))
-                        except json.JSONDecodeError:
+                            rec = json.loads(line)
+                            if isinstance(rec, dict):
+                                rows.append(rec)
+                        except Exception:
                             continue
                 df = pd.DataFrame(rows)
             else:
                 df = pd.read_csv(path)
 
-            expected = {
-                "timestamp", "source_ip", "source_port",
-                "payload", "request_type", "country", "city",
-            }
-            missing = expected - set(df.columns)
-            if missing:
-                log.warning(f"[ML] Missing columns in dataset: {missing}")
+            if df is None or df.empty:
+                log.warning(f"[ML] Loaded empty dataframe from {path}")
                 return pd.DataFrame()
 
+            # add missing cols with defaults
+            for col in expected:
+                if col not in df.columns:
+                    if col == "source_port":
+                        df[col] = 0
+                    elif col == "request_type":
+                        df[col] = "HTTP"
+                    elif col == "country":
+                        df[col] = "BG"
+                    else:
+                        df[col] = ""
+
+            # normalize types
+            df["timestamp"] = df["timestamp"].astype(str)
+            df["source_ip"] = df["source_ip"].astype(str)
+            df["payload"] = df["payload"].fillna("").astype(str)
+            df["request_type"] = df["request_type"].fillna("HTTP").astype(str)
+            df["country"] = df["country"].fillna("BG").astype(str)
+            df["city"] = df["city"].fillna("").astype(str)
+            df["source_port"] = pd.to_numeric(df["source_port"], errors="coerce").fillna(0).astype(int)
+
+            # drop obviously empty rows
+            df = df[~(df["source_ip"].eq("") & df["payload"].eq(""))].reset_index(drop=True)
+
+            log.info(f"[ML] Loaded dataset rows={len(df)} from {path}")
             return df
+
         except Exception as e:
             log.error(f"[ML] Failed to load dataset: {e}")
             return pd.DataFrame()
@@ -487,7 +503,6 @@ class MLEngine:
             ]
         )
         return feats
-
 
 # --- Singleton accessor used by API ---
 _engine_singleton: "MLEngine | None" = None
