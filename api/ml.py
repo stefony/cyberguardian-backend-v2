@@ -8,6 +8,9 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict
 import logging
 from middleware.rate_limiter import limiter, READ_LIMIT, WRITE_LIMIT
+from typing import Literal
+from core.feedback_store import append_label, stats as feedback_stats
+
 
 # 🔎 training data probe
 from core.data_probe import probe_training_file
@@ -89,6 +92,13 @@ class TrainingResponse(BaseModel):
     mean_anomaly_score: Optional[float] = None
     training_date: Optional[str] = None
     error: Optional[str] = None
+    
+    # под останалите Pydantic модели добави:
+class FeedbackItem(BaseModel):
+    label: Literal["benign", "malicious", "suspicious"]
+    log: LogEntry
+    notes: Optional[str] = None
+
 
 # ============================================
 # API ENDPOINTS
@@ -295,6 +305,33 @@ async def batch_threat_scores(request: Request, logs: List[LogEntry]):
         logger.error(f"Failed to calculate batch scores: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.post("/ml/feedback")
+@limiter.limit(WRITE_LIMIT)  # 30 req/min
+async def post_feedback(request: Request, item: FeedbackItem):
+    """
+    Save a labeled log for active learning.
+    """
+    try:
+        append_label(example=item.log.dict(), label=item.label, notes=item.notes)
+        return {"ok": True, "saved": 1}
+    except Exception as e:
+        logger.error(f"Failed to save feedback: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/ml/feedback/stats")
+@limiter.limit(READ_LIMIT)  # 100 req/min
+async def get_feedback_stats(request: Request):
+    """
+    Quick stats for labeled logs.
+    """
+    try:
+        return feedback_stats()
+    except Exception as e:
+        logger.error(f"Failed to read feedback stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/ml/test")
 @limiter.limit(READ_LIMIT)  # 100 requests per minute
 async def test_ml_system(request: Request):
@@ -305,3 +342,5 @@ async def test_ml_system(request: Request):
         "available": ML_AVAILABLE,
         "message": "ML system ready" if ML_AVAILABLE else "ML system not available"
     }
+
+

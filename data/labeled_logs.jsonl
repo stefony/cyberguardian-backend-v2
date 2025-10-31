@@ -1,0 +1,1 @@
+{"ts": "2025-10-31T08:56:14.885054Z", "label": "malicious", "notes": "Possible brute force", "example": {"timestamp": "2025-10-31T10:56:03Z", "source_ip": "10.0.0.50", "source_port": 445, "payload": "/admin/login?user=admin", "request_type": "HTTP", "country": "CN", "city": "Beijing"}}
