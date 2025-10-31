@@ -11,11 +11,11 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
-from sklearn.ensemble import IsolationForest
+from sklearn.ensemble import IsolationForest, RandomForestClassifier
 from sklearn.metrics import silhouette_score
+from sklearn.linear_model import LogisticRegression
 
 log = logging.getLogger("ml_engine")
-
 
 # ------------------------ Utilities ------------------------ #
 def _entropy(s: str) -> float:
@@ -50,14 +50,20 @@ class _EngineState:
         self.model_trained: bool = False
         self.training_date: str | None = None
         self.training_samples: int = 0
+
         self.features: List[str] = [
             "payload_len", "payload_entropy",
             "ratio_digits", "ratio_specials",
             "has_sql", "has_xss", "has_lfi", "has_admin",
             "port_bin", "req_type",
-            "geo_risk"
+            "geo_risk",
         ]
         self.feature_count: int = len(self.features)
+
+        # Active-learning classifier (optional)
+        self.classifier = None
+        self.classifier_threshold = 0.60
+        self.labeled_count = 0
 
         # metrics & objects
         self.silhouette: float | None = None
@@ -77,16 +83,14 @@ class MLEngine:
         # Default to JSONL since project uses data/training_logs.jsonl
         self.dataset_path = dataset_path or os.getenv(
             "ML_DATASET_PATH",
-            "data/training_logs.jsonl"
+            "data/training_logs.jsonl",
         )
         self.state = _EngineState()
         log.info(f"[ML] Using dataset: {self.dataset_path}")
 
     # ---------- Public API (called by routes) ----------
     def get_model_status(self) -> dict:
-        # Extra info about presence of training file (for /status UI)
         present, lines, size = self._probe_dataset_file()
-
         return {
             "model_trained": self.state.model_trained,
             "training_date": self.state.training_date,
@@ -95,7 +99,7 @@ class MLEngine:
             "behavior_clusterer_available": self.state.clusterer is not None,
             "feature_count": self.state.feature_count,
             "features": self.state.features,
-            # extras (used in your status output)
+            # extras for /status
             "training_data_present": present,
             "training_data_lines": lines,
             "training_data_size": size,
@@ -105,17 +109,19 @@ class MLEngine:
     def train_models(self, n_clusters: int = 3, contamination: float = 0.1) -> dict:
         """
         Train KMeans (behavior) + IsolationForest (anomaly) on featurized dataset.
-        Fixes:
-         - uses score_samples() (not deprecated fit_score)
-         - guards against NaN from binning, casting
+        Also (optionally) trains a lightweight classifier from labeled feedback.
         """
         df = self._load_dataset()
         if df.empty:
             log.warning("[ML] Dataset is empty")
             self._mark_untrained()
             return self._train_result(
-                success=True, samples=0, n_clusters=n_clusters,
-                silhouette=None, mean_anomaly=None, date=None
+                success=True,
+                samples=0,
+                n_clusters=n_clusters,
+                silhouette=None,
+                mean_anomaly=None,
+                date=None,
             )
 
         X = self._featurize(df)
@@ -126,29 +132,33 @@ class MLEngine:
             log.warning(f"[ML] Not enough rows to train: {X.shape[0]} (need >= {min_rows})")
             self._mark_untrained(samples=int(X.shape[0]))
             return self._train_result(
-                success=True, samples=int(X.shape[0]),
-                n_clusters=n_clusters, silhouette=None, mean_anomaly=None, date=None
+                success=True,
+                samples=int(X.shape[0]),
+                n_clusters=n_clusters,
+                silhouette=None,
+                mean_anomaly=None,
+                date=None,
             )
 
         # Scale
         scaler = StandardScaler()
         Xs = scaler.fit_transform(X)
 
-        # KMeans
+        # KMeans (behavior)
         kmeans = KMeans(n_clusters=n_clusters, n_init="auto", random_state=42)
         labels = kmeans.fit_predict(Xs)
 
-        # IsolationForest
+        # IsolationForest (anomaly)
         iso = IsolationForest(
             n_estimators=200,
             contamination=float(min(max(contamination, 0.01), 0.4)),
             random_state=42,
         )
         iso.fit(Xs)
-        # Positive -> more normal, Negative -> more anomalous
-        # We want higher = more anomalous → invert
+        # Higher = more anomalous
         anomaly_scores = -iso.score_samples(Xs)
 
+        # Silhouette (if more than one cluster label)
         sil = None
         try:
             if len(set(labels)) > 1:
@@ -156,10 +166,39 @@ class MLEngine:
         except Exception as e:
             log.warning(f"[ML] Silhouette failed: {e}")
 
-        # Save state
+        # ----------  Active learning from feedback (optional) ----------
+        clf = None
+        labeled_count = 0
+        fb_rows = self._load_feedback()
+        if fb_rows:
+            try:
+                ex_list = [ex for (ex, _) in fb_rows]
+                y_labels = [1 if str(lbl).lower() == "malicious" else 0 for (_, lbl) in fb_rows]
+
+                X_fb = self._featurize(pd.DataFrame(ex_list))
+                X_fb_s = scaler.transform(X_fb)
+
+                # Choose a compact classifier; Logistic is fast & stable
+                clf = LogisticRegression(max_iter=200, n_jobs=None)
+                # If LogisticRegression is not available with n_jobs, remove param (older sklearn)
+                try:
+                    clf.fit(X_fb_s, y_labels)
+                except TypeError:
+                    clf = LogisticRegression(max_iter=200)
+                    clf.fit(X_fb_s, y_labels)
+
+                labeled_count = len(y_labels)
+                log.info(f"[ML] Trained feedback classifier on {labeled_count} labeled rows")
+            except Exception as e:
+                log.warning(f"[ML] Feedback classifier training skipped: {e}")
+
+        # ---------- Save state ----------
         self.state.anomaly_detector = iso
         self.state.clusterer = kmeans
         self.state.scaler = scaler
+        self.state.classifier = clf
+        self.state.labeled_count = labeled_count
+
         self.state.model_trained = True
         self.state.training_samples = int(X.shape[0])
         self.state.silhouette = sil
@@ -170,7 +209,7 @@ class MLEngine:
         log.info(
             f"[ML] Training done: samples={self.state.training_samples}, "
             f"clusters={self.state.n_clusters}, silhouette={self.state.silhouette}, "
-            f"mean_anomaly={self.state.mean_anomaly}"
+            f"mean_anomaly={self.state.mean_anomaly}, labeled={self.state.labeled_count}"
         )
 
         return self._train_result(
@@ -208,6 +247,7 @@ class MLEngine:
     def calculate_threat_score(self, log_row: dict) -> dict:
         """
         Hybrid score = ML anomaly (scaled) + rule-based boosts (payload patterns + geo risk).
+        If a feedback classifier exists, its probability adds a small boost.
         Returns 0..100 with levels.
         """
         # 1) ML anomaly
@@ -238,9 +278,21 @@ class MLEngine:
         elif geo >= 0.5:
             rule_boost += 5.0
 
-        # 4) Combine ML + rules
+        # 4) Combine ML + rules (+ optional classifier)
         ml_component = min(max(float(an["anomaly_score"]) * 20.0, 0.0), 100.0)
         score = 10.0 + ml_component * 0.6 + rule_boost
+
+        # Optional: feedback classifier probability
+        if self.state.classifier is not None:
+            try:
+                X = self._featurize(pd.DataFrame([log_row]))
+                Xs = self.state.scaler.transform(X)
+                proba = float(self.state.classifier.predict_proba(Xs)[0][1])  # P(malicious)
+                # add a gentle boost (max +10)
+                score += min(10.0, 10.0 * proba)
+            except Exception:
+                pass
+
         score = float(max(0.0, min(100.0, score)))
 
         if score >= 85:
@@ -261,7 +313,7 @@ class MLEngine:
             "confidence": float(round(an["confidence"], 3)),
         }
 
-    # ------------------------ Helpers ------------------------ #
+    # ------------------------ Helpers (methods) ------------------------ #
     def _train_result(
         self,
         success: bool,
@@ -287,10 +339,30 @@ class MLEngine:
         self.state.anomaly_detector = None
         self.state.clusterer = None
         self.state.scaler = None
+        self.state.classifier = None
+        self.state.labeled_count = 0
         self.state.silhouette = None
         self.state.mean_anomaly = None
         self.state.n_clusters = None
         self.state.training_date = None
+
+    def _load_feedback(self) -> list[tuple[dict, str]]:
+        """Loads labeled logs from jsonl for active learning."""
+        path = "data/labeled_logs.jsonl"
+        if not os.path.exists(path):
+            return []
+        rows: list[tuple[dict, str]] = []
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                try:
+                    rec = json.loads(line.strip())
+                    ex = rec.get("example") or rec.get("log") or {}
+                    label = rec.get("label")
+                    if ex and label:
+                        rows.append((ex, label))
+                except Exception:
+                    continue
+        return rows
 
     def _probe_dataset_file(self) -> tuple[bool, int | None, int | None]:
         """Lightweight probe for /status (does file exist, how many lines/size)."""
@@ -318,7 +390,7 @@ class MLEngine:
 
         try:
             if path.endswith(".jsonl"):
-                rows: List[Dict[str, Any]] = []
+                rows: list[dict] = []
                 with open(path, "r", encoding="utf-8") as f:
                     for line in f:
                         line = line.strip()
@@ -327,15 +399,15 @@ class MLEngine:
                         try:
                             rows.append(json.loads(line))
                         except json.JSONDecodeError:
-                            # If a row is broken, skip it (robustness)
                             continue
                 df = pd.DataFrame(rows)
             else:
-                # CSV fallback
                 df = pd.read_csv(path)
 
-            # Normalize & check required columns
-            expected = {"timestamp", "source_ip", "source_port", "payload", "request_type", "country", "city"}
+            expected = {
+                "timestamp", "source_ip", "source_port",
+                "payload", "request_type", "country", "city",
+            }
             missing = expected - set(df.columns)
             if missing:
                 log.warning(f"[ML] Missing columns in dataset: {missing}")
@@ -393,35 +465,34 @@ class MLEngine:
             include_lowest=True,
             right=True,
         )
-        # cat.codes returns -1 for NaN → map to 0
         port_bin = port_categories.astype("category").cat.codes.replace(-1, 0).astype(int)
 
         # Request type & geo risk
         req_type = df["request_type"].str.upper().map(REQUEST_MAP).fillna(4).astype(int)
         geo_risk = df["country"].str.upper().map(GEO_RISK).fillna(0.2).astype(float)
 
-        feats = np.column_stack([
-            payload_len.values.astype(float),
-            np.asarray(list(payload_entropy), dtype=float),
-            ratio_digits.values.astype(float),
-            ratio_specials.values.astype(float),
-            has_sql.values.astype(int),
-            has_xss.values.astype(int),
-            has_lfi.values.astype(int),
-            has_admin.values.astype(int),
-            port_bin.values.astype(int),
-            req_type.values.astype(int),
-            geo_risk.values.astype(float),
-        ])
-
+        feats = np.column_stack(
+            [
+                payload_len.values.astype(float),
+                np.asarray(list(payload_entropy), dtype=float),
+                ratio_digits.values.astype(float),
+                ratio_specials.values.astype(float),
+                has_sql.values.astype(int),
+                has_xss.values.astype(int),
+                has_lfi.values.astype(int),
+                has_admin.values.astype(int),
+                port_bin.values.astype(int),
+                req_type.values.astype(int),
+                geo_risk.values.astype(float),
+            ]
+        )
         return feats
 
 
 # --- Singleton accessor used by API ---
 _engine_singleton: "MLEngine | None" = None
 
-
-def get_ml_engine() -> MLEngine:
+def get_ml_engine() -> "MLEngine":
     global _engine_singleton
     if _engine_singleton is None:
         _engine_singleton = MLEngine()
