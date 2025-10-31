@@ -15,7 +15,46 @@ from sklearn.ensemble import IsolationForest, RandomForestClassifier
 from sklearn.metrics import silhouette_score
 from sklearn.linear_model import LogisticRegression
 
+from pathlib import Path
+import joblib
+
 log = logging.getLogger("ml_engine")
+
+# === Model persistence (joblib) ===
+MODEL_DIR = Path(os.getenv("MODEL_DIR", "data/models"))
+
+# безопасно осигуряване на директория (ако по грешка е файл)
+try:
+    if MODEL_DIR.exists() and MODEL_DIR.is_file():
+        MODEL_DIR.rename(MODEL_DIR.with_suffix(".bak"))  # запази файла като .bak
+    if not MODEL_DIR.exists():
+        MODEL_DIR.mkdir(parents=True, exist_ok=True)
+except Exception:
+    # последен fallback – алтернативна папка
+    alt = Path("data/models_store")
+    alt.mkdir(parents=True, exist_ok=True)
+    MODEL_DIR = alt
+
+
+def save_models(artifacts: dict, version: str | None = None) -> Path:
+    ts = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    version = version or ts
+    path = MODEL_DIR / f"model_{version}.joblib"
+    tmp = path.with_suffix(".tmp")
+    joblib.dump(artifacts, tmp)
+    os.replace(tmp, path)  # атомична подмяна
+    (MODEL_DIR / "LATEST").write_text(path.name)
+    return path
+
+def load_latest_models() -> dict | None:
+    latest = MODEL_DIR / "LATEST"
+    if not latest.exists():
+        return None
+    path = MODEL_DIR / latest.read_text().strip()
+    if not path.exists():
+        return None
+    return joblib.load(path)
+
 
 # ------------------------ Utilities ------------------------ #
 def _entropy(s: str) -> float:
@@ -72,6 +111,9 @@ class _EngineState:
         self.clusterer: KMeans | None = None
         self.scaler: StandardScaler | None = None
 
+        # === anomaly threshold (configurable) ===
+        self.anomaly_threshold: float = float(os.getenv("ML_ANOMALY_THRESHOLD", "1.0"))
+
 # ------------------------ Engine ------------------------ #
 class MLEngine:
     """Simple ML engine for anomaly & behavior detection over request logs."""
@@ -84,6 +126,15 @@ class MLEngine:
         )
         self.state = _EngineState()
         log.info(f"[ML] Using dataset: {self.dataset_path}")
+
+        # AUTO-LOAD latest persisted model if present
+        try:
+            artifacts = load_latest_models()
+            if artifacts:
+                self._hydrate_state_from_artifacts(artifacts)
+                log.info("[ML] Loaded persisted model artifacts (LATEST)")
+        except Exception as e:
+            log.warning(f"[ML] Failed to auto-load persisted model: {e}")
 
     # ---------- Public API (called by routes) ----------
     def get_model_status(self) -> dict:
@@ -102,6 +153,19 @@ class MLEngine:
             "training_data_size": size,
             "training_data_path": self.dataset_path,
         }
+
+    # ---- thresholds API for routes ----
+    def get_thresholds(self) -> dict:
+        return {"anomaly_threshold": float(self.state.anomaly_threshold or 1.0)}
+
+    def set_thresholds(self, anomaly_threshold: float | None = None) -> dict:
+        if anomaly_threshold is not None:
+            # guardrails
+            at = float(anomaly_threshold)
+            if not (0.1 <= at <= 5.0):
+                raise ValueError("anomaly_threshold must be between 0.1 and 5.0")
+            self.state.anomaly_threshold = at
+        return self.get_thresholds()
 
     def train_models(self, n_clusters: int = 3, contamination: float = 0.1) -> dict:
         """
@@ -198,6 +262,26 @@ class MLEngine:
         self.state.n_clusters = int(n_clusters)
         self.state.training_date = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
+        # ---------- Persist artifacts ----------
+        artifacts = {
+            "scaler": scaler,
+            "kmeans": kmeans,
+            "isoforest": iso,
+            "classifier": clf,
+           "metadata": {
+    "samples": self.state.training_samples,
+    "silhouette": self.state.silhouette,
+    "mean_anomaly": self.state.mean_anomaly,
+    "n_clusters": self.state.n_clusters,
+    "training_date": self.state.training_date,
+    "anomaly_threshold": float(self.state.anomaly_threshold or 1.0),
+},
+        }
+        try:
+            save_models(artifacts)
+        except Exception as e:
+            log.warning(f"[ML] Persisting model failed: {e}")
+
         log.info(
             f"[ML] Training done: samples={self.state.training_samples}, "
             f"clusters={self.state.n_clusters}, silhouette={self.state.silhouette}, "
@@ -221,11 +305,14 @@ class MLEngine:
         score = -float(self.state.anomaly_detector.score_samples(Xs)[0])  # invert so higher=worse
         conf = float(min(max(score / 5.0, 0.0), 1.0))  # simple soft confidence
 
+        thr = float(self.state.anomaly_threshold or 1.0)
+        is_anom = bool(score > thr)
+
         return {
-            "is_anomaly": bool(score > 1.0),
+            "is_anomaly": is_anom,
             "anomaly_score": float(score),
             "confidence": conf,
-            "threshold": 1.0,
+            "threshold": thr,
         }
 
     def analyze_behavior(self, log_row: dict) -> dict:
@@ -292,6 +379,8 @@ class MLEngine:
             lvl = "HIGH"
         elif score >= 45:
             lvl = "MEDIUM"
+            # else LOW below
+
         else:
             lvl = "LOW"
 
@@ -305,6 +394,28 @@ class MLEngine:
         }
 
     # ------------------------ Helpers (methods) ------------------------ #
+    def _hydrate_state_from_artifacts(self, artifacts: dict) -> None:
+        """Load state objects & metadata from persisted artifacts."""
+        self.state.scaler = artifacts.get("scaler")
+        self.state.clusterer = artifacts.get("kmeans")
+        self.state.anomaly_detector = artifacts.get("isoforest")
+        self.state.classifier = artifacts.get("classifier")
+
+        meta = artifacts.get("metadata", {}) or {}
+        self.state.training_samples = int(meta.get("samples", 0))
+        self.state.silhouette = meta.get("silhouette")
+        self.state.mean_anomaly = meta.get("mean_anomaly")
+        self.state.n_clusters = int(meta.get("n_clusters", 0) or 0)
+        self.state.training_date = meta.get("training_date")
+        self.state.anomaly_threshold = float(meta.get("anomaly_threshold", self.state.anomaly_threshold or 1.0))
+
+
+        self.state.model_trained = all([
+            self.state.scaler is not None,
+            self.state.clusterer is not None,
+            self.state.anomaly_detector is not None,
+        ])
+
     def _train_result(
         self,
         success: bool,

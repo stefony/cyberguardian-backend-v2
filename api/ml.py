@@ -5,23 +5,23 @@ Machine Learning endpoints for threat detection
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Request
 from pydantic import BaseModel
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Literal
 import logging
-from middleware.rate_limiter import limiter, READ_LIMIT, WRITE_LIMIT
-from typing import Literal
-from core.feedback_store import append_label, stats as feedback_stats
 
+from middleware.rate_limiter import limiter, READ_LIMIT, WRITE_LIMIT
 
 # 🔎 training data probe
 from core.data_probe import probe_training_file
 
 # Import ML Engine
 try:
-    from core.ml_engine import get_ml_engine
+    from core.ml_engine import get_ml_engine, save_models, load_latest_models
     ML_AVAILABLE = True
 except ImportError as e:
     ML_AVAILABLE = False
     logging.warning(f"ML Engine not available: {e}")
+
+from core.feedback_store import append_label, stats as feedback_stats
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -92,13 +92,50 @@ class TrainingResponse(BaseModel):
     mean_anomaly_score: Optional[float] = None
     training_date: Optional[str] = None
     error: Optional[str] = None
-    
-    # под останалите Pydantic модели добави:
+
 class FeedbackItem(BaseModel):
     label: Literal["benign", "malicious", "suspicious"]
     log: LogEntry
     notes: Optional[str] = None
 
+class MetricsResponse(BaseModel):
+    trained: bool
+    samples: int
+    n_clusters: Optional[int] = None
+    silhouette: Optional[float] = None
+    mean_anomaly: Optional[float] = None
+    labeled_count: int
+    classifier_available: bool
+    training_date: Optional[str] = None
+
+# --- NEW: Thresholds models ---
+class ThresholdsRequest(BaseModel):
+    anomaly_threshold: Optional[float] = None  # e.g. 0.7
+
+class ThresholdsResponse(BaseModel):
+    anomaly_threshold: float
+
+# ============================================
+# INTERNAL HELPERS
+# ============================================
+
+def _build_artifacts_from_engine(eng):
+    """Collect current ML artifacts from engine state for persistence."""
+    if not eng.state.model_trained:
+        return None
+    return {
+        "scaler": eng.state.scaler,
+        "kmeans": eng.state.clusterer,
+        "isoforest": eng.state.anomaly_detector,
+        "classifier": eng.state.classifier,
+        "metadata": {
+            "samples": eng.state.training_samples,
+            "silhouette": eng.state.silhouette,
+            "mean_anomaly": eng.state.mean_anomaly,
+            "n_clusters": eng.state.n_clusters,
+            "training_date": eng.state.training_date,
+        },
+    }
 
 # ============================================
 # API ENDPOINTS
@@ -110,11 +147,9 @@ async def get_ml_status(request: Request):
     """
     Get ML model status and metadata + training data diagnostics
     """
-    # Диагностика за training файла (работи независимо от ML)
     diag = probe_training_file()  # CG_TRAINING_PATH или data/training_logs.jsonl
 
     if not ML_AVAILABLE:
-        # Връщаме базов статус + диагностика, за да е полезно дори без ML Engine
         return ModelStatusResponse(
             model_trained=False,
             training_date=None,
@@ -132,20 +167,15 @@ async def get_ml_status(request: Request):
     try:
         engine = get_ml_engine()
         status: Dict = engine.get_model_status()
-
-        # Инжектираме диагностиката в отговора
         status.update({
             "training_data_present": diag.get("present"),
             "training_data_lines": diag.get("line_count"),
             "training_data_size": diag.get("size_bytes"),
             "training_data_path": diag.get("path"),
         })
-
         return ModelStatusResponse(**status)
-
     except Exception as e:
         logger.error(f"Failed to get ML status: {e}")
-        # Дори при грешка – върни диагностика
         return ModelStatusResponse(
             model_trained=False,
             training_date=None,
@@ -163,14 +193,14 @@ async def get_ml_status(request: Request):
 @router.post("/ml/train", response_model=TrainingResponse)
 @limiter.limit(WRITE_LIMIT)  # 30 requests per minute
 async def train_models(
-    request: Request,                      # важно за slowapi
+    request: Request,
     background_tasks: BackgroundTasks,
     request_body: TrainingRequest,
-    sync: bool = False                     # <─ нов параметър: ?sync=1 за блокиращо обучение
+    sync: bool = False  # ?sync=1 за блокиращо обучение
 ):
     """
     Train ML models on available data.
-    If sync=1 is passed as query param, training runs synchronously and returns the actual results.
+    If sync=1 is passed, training runs synchronously and returns actual results.
     Otherwise it schedules a background task and returns immediately.
     """
     if not ML_AVAILABLE:
@@ -216,7 +246,6 @@ async def train_models(
     except Exception as e:
         logger.error(f"Failed to start training: {e}")
         return TrainingResponse(success=False, error=str(e))
-
 
 @router.post("/ml/predict/anomaly", response_model=AnomalyPredictionResponse)
 @limiter.limit(WRITE_LIMIT)  # 30 requests per minute
@@ -318,7 +347,6 @@ async def post_feedback(request: Request, item: FeedbackItem):
         logger.error(f"Failed to save feedback: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @router.get("/ml/feedback/stats")
 @limiter.limit(READ_LIMIT)  # 100 req/min
 async def get_feedback_stats(request: Request):
@@ -331,6 +359,86 @@ async def get_feedback_stats(request: Request):
         logger.error(f"Failed to read feedback stats: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# ===== Persist & Load endpoints =====
+@router.post("/ml/save")
+@limiter.limit(WRITE_LIMIT)
+async def ml_save(request: Request):
+    if not ML_AVAILABLE:
+        raise HTTPException(status_code=503, detail="ML engine not available")
+    eng = get_ml_engine()
+    artifacts = _build_artifacts_from_engine(eng)
+    if not artifacts:
+        raise HTTPException(status_code=400, detail="Model not trained")
+    try:
+        p = save_models(artifacts)
+        return {"ok": True, "saved_as": p.name}
+    except Exception as e:
+        logging.exception("Persisting model failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/ml/load")
+@limiter.limit(WRITE_LIMIT)
+async def ml_load(request: Request):
+    if not ML_AVAILABLE:
+        raise HTTPException(status_code=503, detail="ML engine not available")
+    eng = get_ml_engine()
+    artifacts = load_latest_models()
+    if not artifacts:
+        raise HTTPException(status_code=404, detail="No persisted model found")
+    try:
+        eng._hydrate_state_from_artifacts(artifacts)
+        return {
+            "ok": True,
+            "model_trained": eng.state.model_trained,
+            "training_date": eng.state.training_date,
+            "samples": eng.state.training_samples,
+            "n_clusters": eng.state.n_clusters,
+        }
+    except Exception as e:
+        logging.exception("Hydrating state failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/ml/metrics", response_model=MetricsResponse)
+@limiter.limit(READ_LIMIT)
+async def get_ml_metrics(request: Request):
+    if not ML_AVAILABLE:
+        raise HTTPException(status_code=503, detail="ML engine not available")
+    eng = get_ml_engine()
+    st = eng.state
+    return MetricsResponse(
+        trained=st.model_trained,
+        samples=st.training_samples or 0,
+        n_clusters=st.n_clusters,
+        silhouette=st.silhouette,
+        mean_anomaly=st.mean_anomaly,
+        labeled_count=st.labeled_count or 0,
+        classifier_available=bool(st.classifier is not None),
+        training_date=st.training_date,
+    )
+
+# --- NEW: Thresholds endpoints ---
+@router.get("/ml/thresholds", response_model=ThresholdsResponse)
+@limiter.limit(READ_LIMIT)
+async def get_thresholds(request: Request):
+    if not ML_AVAILABLE:
+        raise HTTPException(status_code=503, detail="ML engine not available")
+    eng = get_ml_engine()
+    return ThresholdsResponse(**eng.get_thresholds())
+
+@router.post("/ml/thresholds", response_model=ThresholdsResponse)
+@limiter.limit(WRITE_LIMIT)
+async def set_thresholds(request: Request, body: ThresholdsRequest):
+    if not ML_AVAILABLE:
+        raise HTTPException(status_code=503, detail="ML engine not available")
+    eng = get_ml_engine()
+    try:
+        updated = eng.set_thresholds(anomaly_threshold=body.anomaly_threshold)
+        return ThresholdsResponse(**updated)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.exception("Failed to set thresholds")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/ml/test")
 @limiter.limit(READ_LIMIT)  # 100 requests per minute
@@ -342,5 +450,3 @@ async def test_ml_system(request: Request):
         "available": ML_AVAILABLE,
         "message": "ML system ready" if ML_AVAILABLE else "ML system not available"
     }
-
-

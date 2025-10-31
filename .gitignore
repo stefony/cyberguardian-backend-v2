@@ -27,4 +27,11 @@ test_upload.py
 test.txt
 
 # OS junk
-.DS_Store
+.DS_Store# === ML Artifacts (do not commit) ===
+data/models/
+data/models_store/
+*.joblib
+
+# Feedback & training data (optional to ignore)
+data/labeled_logs.jsonl
+data/models.bak
