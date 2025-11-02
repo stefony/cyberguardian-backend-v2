@@ -15,12 +15,14 @@ from api.analytics import router as analytics_router
 from api.settings import router as settings_router
 from api.emails import router as emails_router
 from api.honeypots import router as honeypots_router
+from api.protection import router as protection_router  # ← NEW
 from api.ml import router as ml_router
 from api import threats, detection, deception, honeypots, ml, ai_insights, analytics, emails, settings, health
 from api.auth import router as auth_router
 from contextlib import asynccontextmanager
 from api.websocket import router as websocket_router
 from api.google_oauth import router as google_oauth_router
+
 
 # ============================================
 # Logging (set up BEFORE app creation)
@@ -125,6 +127,7 @@ app.include_router(analytics_router, prefix="/api/analytics", tags=["Analytics"]
 app.include_router(emails_router, prefix="/api/emails", tags=["Emails"])
 app.include_router(settings_router, prefix="/api", tags=["Settings"])
 app.include_router(honeypots_router, prefix="/api", tags=["Honeypots"])
+app.include_router(protection_router)
 app.include_router(ml_router, prefix="/api", tags=["Machine Learning"])
 app.include_router(websocket_router, tags=["WebSocket"])  # No prefix for WebSocket
 app.include_router(google_oauth_router, prefix="/api", tags=["Auth"])

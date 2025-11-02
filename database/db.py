@@ -99,6 +99,32 @@ def init_database():
             FOREIGN KEY (honeypot_id) REFERENCES honeypots (id)
         )
     """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS fs_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        file_size INTEGER,
+        file_hash TEXT,
+        threat_score REAL,
+        threat_level TEXT,
+        ml_details TEXT,
+        quarantined INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL
+    )
+""")
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS protection_settings (
+        id INTEGER PRIMARY KEY DEFAULT 1,
+        enabled INTEGER NOT NULL DEFAULT 0,
+        watch_paths TEXT NOT NULL,
+        auto_quarantine INTEGER NOT NULL DEFAULT 0,
+        threat_threshold INTEGER NOT NULL DEFAULT 80,
+        updated_at TEXT NOT NULL,
+        CHECK (id = 1)
+    )
+""")
     
     # Users table
     cursor.execute("""
@@ -808,7 +834,128 @@ def update_last_login(user_id: str):
     
     conn.commit()
     conn.close()
+# ========== FS EVENTS FUNCTIONS ==========
 
+def add_fs_event(
+    event_type: str,
+    file_path: str,
+    threat_score: float = 0.0,
+    threat_level: str = "low",
+    ml_details: Optional[Dict[str, Any]] = None,
+    file_size: Optional[int] = None,
+    file_hash: Optional[str] = None,
+    quarantined: bool = False
+) -> int:
+    """Add file system event"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    now = datetime.now().isoformat()
+    ml_json = json.dumps(ml_details) if ml_details else None
+    
+    cursor.execute("""
+        INSERT INTO fs_events 
+        (timestamp, event_type, file_path, file_size, file_hash, 
+         threat_score, threat_level, ml_details, quarantined, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (now, event_type, file_path, file_size, file_hash,
+          threat_score, threat_level, ml_json, int(quarantined), now))
+    
+    event_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    
+    return event_id
+
+
+def get_fs_events(limit: int = 100) -> List[Dict[str, Any]]:
+    """Get recent file system events"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT * FROM fs_events 
+        ORDER BY timestamp DESC 
+        LIMIT ?
+    """, (limit,))
+    
+    rows = cursor.fetchall()
+    conn.close()
+    
+    events = []
+    for row in rows:
+        event = dict(row)
+        if event.get("ml_details"):
+            event["ml_details"] = json.loads(event["ml_details"])
+        events.append(event)
+    
+    return events
+
+
+def get_protection_settings() -> Dict[str, Any]:
+    """Get protection settings"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM protection_settings WHERE id = 1")
+    row = cursor.fetchone()
+    
+    if not row:
+        # Create default settings
+        now = datetime.now().isoformat()
+        cursor.execute("""
+            INSERT INTO protection_settings 
+            (id, enabled, watch_paths, auto_quarantine, threat_threshold, updated_at)
+            VALUES (1, 0, '[]', 0, 80, ?)
+        """, (now,))
+        conn.commit()
+        cursor.execute("SELECT * FROM protection_settings WHERE id = 1")
+        row = cursor.fetchone()
+    
+    conn.close()
+    
+    settings = dict(row)
+    settings["watch_paths"] = json.loads(settings["watch_paths"])
+    return settings
+
+
+def update_protection_settings(
+    enabled: bool,
+    watch_paths: List[str],
+    auto_quarantine: Optional[bool] = None,
+    threat_threshold: Optional[int] = None
+) -> bool:
+    """Update protection settings"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    now = datetime.now().isoformat()
+    paths_json = json.dumps(watch_paths)
+    
+    updates = ["enabled = ?", "watch_paths = ?", "updated_at = ?"]
+    params = [int(enabled), paths_json, now]
+    
+    if auto_quarantine is not None:
+        updates.append("auto_quarantine = ?")
+        params.append(int(auto_quarantine))
+    
+    if threat_threshold is not None:
+        updates.append("threat_threshold = ?")
+        params.append(threat_threshold)
+    
+    params.append(1)  # WHERE id = 1
+    
+    cursor.execute(f"""
+        UPDATE protection_settings 
+        SET {', '.join(updates)}
+        WHERE id = ?
+    """, params)
+    
+    success = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    
+    return success
 
 # Initialize database on module import
 init_database()
