@@ -86,17 +86,17 @@ def initialize_sample_analytics_data():
         if scans_count == 0:
             # Add sample scans
             sample_scans = [
-                ("2025-01-14 09:30:00", "file", "completed", "/tmp/test.exe", 1),
-                ("2025-01-14 08:15:00", "directory", "completed", "/home/user/downloads", 0),
-                ("2025-01-13 14:20:00", "full_system", "completed", "/", 2),
-                ("2025-01-13 11:45:00", "process", "completed", "suspicious.exe", 1),
-                ("2025-01-12 16:30:00", "file", "completed", "/var/tmp/malware.bin", 1),
+                ("2025-01-14 09:30:00", "file", "completed", 1),
+        ("2025-01-14 08:15:00", "directory", "completed", 0),
+        ("2025-01-13 14:20:00", "full_system", "completed", 2),
+        ("2025-01-13 11:45:00", "process", "completed", 1),
+        ("2025-01-12 16:30:00", "file", "completed", 1),
             ]
             
             cursor.executemany(
-                """INSERT INTO scans (started_at, scan_type, status, target, threats_found)
-                   VALUES (?, ?, ?, ?, ?)""",
-                sample_scans
+                """INSERT INTO scans (started_at, scan_type, status, threats_found)
+           VALUES (?, ?, ?, ?)""",
+        sample_scans
             )
             print("✅ Sample scans data initialized")
         
