@@ -17,8 +17,6 @@ from fastapi import Request
 from middleware.rate_limiter import limiter, READ_LIMIT
 import sqlite3
 
-router = APIRouter()
-
 # ============================================
 # PYDANTIC MODELS
 # ============================================
@@ -59,7 +57,7 @@ class OverviewStats(BaseModel):
 
 def get_db_connection():
     """Get database connection"""
-    conn = sqlite3.connect('database/cyberguardian.db')  # ← БЕЗ 'backend/'
+    conn = sqlite3.connect('database/cyberguardian.db')
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -70,11 +68,80 @@ def get_date_range(days: int = 7):
     return start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')
 
 # ============================================
+# INITIALIZE SAMPLE DATA
+# ============================================
+
+def initialize_sample_analytics_data():
+    """
+    Add sample data for analytics if tables are empty
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Check if scans table has data
+        cursor.execute("SELECT COUNT(*) FROM scans")
+        scans_count = cursor.fetchone()[0]
+        
+        if scans_count == 0:
+            # Add sample scans
+            sample_scans = [
+                ("2025-01-14 09:30:00", "file", "completed", "/tmp/test.exe", 1),
+                ("2025-01-14 08:15:00", "directory", "completed", "/home/user/downloads", 0),
+                ("2025-01-13 14:20:00", "full_system", "completed", "/", 2),
+                ("2025-01-13 11:45:00", "process", "completed", "suspicious.exe", 1),
+                ("2025-01-12 16:30:00", "file", "completed", "/var/tmp/malware.bin", 1),
+            ]
+            
+            cursor.executemany(
+                """INSERT INTO scans (started_at, scan_type, status, target, threats_found)
+                   VALUES (?, ?, ?, ?, ?)""",
+                sample_scans
+            )
+            print("✅ Sample scans data initialized")
+        
+        # Check if honeypot_logs table has data
+        cursor.execute("SELECT COUNT(*) FROM honeypot_logs")
+        logs_count = cursor.fetchone()[0]
+        
+        if logs_count == 0:
+            # Add sample honeypot logs
+            sample_logs = [
+                (1, "2025-01-14 09:23:00", "198.51.100.29", "authentication_failed", "SSH login attempt failed"),
+                (2, "2025-01-14 08:45:00", "203.0.113.17", "connection_attempt", "HTTP request to fake admin panel"),
+                (1, "2025-01-13 15:12:00", "198.51.100.219", "authentication_failed", "Multiple SSH attempts"),
+                (3, "2025-01-13 12:30:00", "192.0.2.51", "connection_attempt", "FTP connection attempt"),
+                (2, "2025-01-12 18:20:00", "203.0.113.51", "authentication_failed", "Admin login failed"),
+                (1, "2025-01-12 14:15:00", "198.51.100.100", "connection_attempt", "Port scan detected"),
+                (3, "2025-01-11 10:30:00", "192.0.2.156", "authentication_failed", "FTP brute force"),
+                (2, "2025-01-11 09:45:00", "203.0.113.11", "connection_attempt", "HTTP scanning"),
+            ]
+            
+            cursor.executemany(
+                """INSERT INTO honeypot_logs (honeypot_id, timestamp, source_ip, action, details)
+                   VALUES (?, ?, ?, ?, ?)""",
+                sample_logs
+            )
+            print("✅ Sample honeypot logs initialized")
+        
+        conn.commit()
+        conn.close()
+        
+    except Exception as e:
+        print(f"❌ Error initializing analytics data: {e}")
+
+
+# Initialize on module load
+initialize_sample_analytics_data()
+
+router = APIRouter()
+
+# ============================================
 # API ENDPOINTS
 # ============================================
 
 @router.get("/overview", response_model=OverviewStats)
-@limiter.limit(READ_LIMIT)  # 100 requests per minute
+@limiter.limit(READ_LIMIT)
 async def get_overview_stats(request: Request):
     """
     Get overall system statistics
@@ -178,7 +245,6 @@ async def get_threats_timeline(request: Request, days: int = Query(7, ge=1, le=9
             pass
 
 
-
 @router.get("/detection-stats", response_model=List[DetectionBreakdown])
 @limiter.limit(READ_LIMIT)
 async def get_detection_stats(request: Request):
@@ -213,13 +279,11 @@ async def get_detection_stats(request: Request):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get detection stats: {str(e)}")
-
     finally:
         try:
             conn.close()
         except:
             pass
-
 
 
 @router.get("/honeypot-activity", response_model=List[TimelinePoint])
@@ -254,13 +318,11 @@ async def get_honeypot_activity(request: Request, days: int = Query(7, ge=1, le=
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get honeypot activity: {str(e)}")
-
     finally:
         try:
             conn.close()
         except:
             pass
-
 
 
 @router.get("/top-threats", response_model=List[ThreatCategory])
@@ -297,7 +359,6 @@ async def get_top_threats(request: Request, limit: int = Query(5, ge=1, le=20)):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get top threats: {str(e)}")
-
     finally:
         try:
             conn.close()
