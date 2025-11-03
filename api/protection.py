@@ -6,6 +6,7 @@ Real-time file protection endpoints
 from fastapi import APIRouter, BackgroundTasks, Request
 from pydantic import BaseModel
 from typing import List, Optional
+from datetime import datetime
 from core.fs_watcher import FSWatcher
 from core.ml_engine import get_ml_engine
 from database.db import (
@@ -20,6 +21,14 @@ router = APIRouter(prefix="/api/protection", tags=["protection"])
 
 # Global watcher instance
 WATCHER = FSWatcher()
+
+# Global statistics tracker
+STATS = {
+    "files_scanned": 0,
+    "threats_detected": 0,
+    "started_at": None,
+    "last_scan": None
+}
 
 
 # ============================================
@@ -74,9 +83,11 @@ async def toggle_protection(request: Request, req: ToggleRequest, bt: Background
     if req.enabled:
         if not WATCHER.is_enabled():
             WATCHER.start(req.paths)
+            STATS["started_at"] = datetime.utcnow()  # ← Track start time
             bt.add_task(_consumer_loop)
     else:
         WATCHER.stop()
+        STATS["started_at"] = None  # ← Reset on stop
     
     settings = get_protection_settings()
     
@@ -97,6 +108,26 @@ async def get_events(request: Request, limit: int = 100):
         "success": True,
         "data": events,
         "count": len(events)
+    }
+
+
+@router.get("/stats")
+@limiter.limit(READ_LIMIT)
+async def get_stats(request: Request):
+    """Get protection statistics"""
+    uptime_seconds = 0
+    if STATS["started_at"] and WATCHER.is_enabled():
+        uptime_seconds = (datetime.utcnow() - STATS["started_at"]).total_seconds()
+    
+    return {
+        "success": True,
+        "data": {
+            "files_scanned": STATS["files_scanned"],
+            "threats_detected": STATS["threats_detected"],
+            "uptime_seconds": int(uptime_seconds),
+            "last_scan": STATS["last_scan"],
+            "is_active": WATCHER.is_enabled()
+        }
     }
 
 
@@ -139,6 +170,12 @@ def _consumer_loop():
             
             threat_score = ml_result.get("threat_score", 0)
             threat_level = ml_result.get("threat_level", "low")
+            
+            # Update statistics
+            STATS["files_scanned"] += 1
+            STATS["last_scan"] = ev["ts"]
+            if threat_score >= 70:  # Consider 70+ as threat
+                STATS["threats_detected"] += 1
             
             # Save to database
             add_fs_event(
