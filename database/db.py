@@ -123,6 +123,38 @@ def init_database():
         threat_threshold INTEGER NOT NULL DEFAULT 80,
         updated_at TEXT NOT NULL,
         CHECK (id = 1)
+    )  
+""") 
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS scan_schedules (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        scan_type TEXT NOT NULL,
+        target_path TEXT NOT NULL,
+        schedule_type TEXT NOT NULL,
+        cron_expression TEXT,
+        interval_days INTEGER,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        last_run TEXT,
+        next_run TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+""")
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS scan_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        schedule_id INTEGER,
+        scan_type TEXT NOT NULL,
+        target_path TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        completed_at TEXT,
+        status TEXT NOT NULL,
+        files_scanned INTEGER NOT NULL DEFAULT 0,
+        threats_found INTEGER NOT NULL DEFAULT 0,
+        duration_seconds INTEGER,
+        error_message TEXT,
+        FOREIGN KEY (schedule_id) REFERENCES scan_schedules(id)
     )
 """)
     
@@ -956,6 +988,227 @@ def update_protection_settings(
     conn.close()
     
     return success
+
+# ========== SCAN SCHEDULES FUNCTIONS ==========
+
+def add_scan_schedule(
+    name: str,
+    scan_type: str,
+    target_path: str,
+    schedule_type: str,
+    cron_expression: Optional[str] = None,
+    interval_days: Optional[int] = None,
+    enabled: bool = True
+) -> int:
+    """Add new scan schedule"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    now = datetime.now().isoformat()
+    
+    cursor.execute("""
+        INSERT INTO scan_schedules 
+        (name, scan_type, target_path, schedule_type, cron_expression, 
+         interval_days, enabled, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (name, scan_type, target_path, schedule_type, cron_expression,
+          interval_days, int(enabled), now, now))
+    
+    schedule_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    
+    return schedule_id
+
+
+def get_scan_schedules(enabled_only: bool = False) -> List[Dict[str, Any]]:
+    """Get all scan schedules"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    query = "SELECT * FROM scan_schedules"
+    if enabled_only:
+        query += " WHERE enabled = 1"
+    query += " ORDER BY created_at DESC"
+    
+    cursor.execute(query)
+    rows = cursor.fetchall()
+    conn.close()
+    
+    return [dict(row) for row in rows]
+
+
+def get_scan_schedule(schedule_id: int) -> Optional[Dict[str, Any]]:
+    """Get single scan schedule"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM scan_schedules WHERE id = ?", (schedule_id,))
+    row = cursor.fetchone()
+    conn.close()
+    
+    return dict(row) if row else None
+
+
+def update_scan_schedule(
+    schedule_id: int,
+    name: Optional[str] = None,
+    enabled: Optional[bool] = None,
+    last_run: Optional[str] = None,
+    next_run: Optional[str] = None
+) -> bool:
+    """Update scan schedule"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    updates = ["updated_at = ?"]
+    params = [datetime.now().isoformat()]
+    
+    if name is not None:
+        updates.append("name = ?")
+        params.append(name)
+    
+    if enabled is not None:
+        updates.append("enabled = ?")
+        params.append(int(enabled))
+    
+    if last_run is not None:
+        updates.append("last_run = ?")
+        params.append(last_run)
+    
+    if next_run is not None:
+        updates.append("next_run = ?")
+        params.append(next_run)
+    
+    params.append(schedule_id)
+    
+    cursor.execute(f"""
+        UPDATE scan_schedules 
+        SET {', '.join(updates)}
+        WHERE id = ?
+    """, params)
+    
+    success = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    
+    return success
+
+
+def delete_scan_schedule(schedule_id: int) -> bool:
+    """Delete scan schedule"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("DELETE FROM scan_schedules WHERE id = ?", (schedule_id,))
+    
+    success = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    
+    return success
+
+
+# ========== SCAN HISTORY FUNCTIONS ==========
+
+def add_scan_history(
+    schedule_id: Optional[int],
+    scan_type: str,
+    target_path: str,
+    started_at: str,
+    status: str = "running"
+) -> int:
+    """Add scan history entry"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        INSERT INTO scan_history 
+        (schedule_id, scan_type, target_path, started_at, status)
+        VALUES (?, ?, ?, ?, ?)
+    """, (schedule_id, scan_type, target_path, started_at, status))
+    
+    history_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    
+    return history_id
+
+
+def update_scan_history(
+    history_id: int,
+    completed_at: Optional[str] = None,
+    status: Optional[str] = None,
+    files_scanned: Optional[int] = None,
+    threats_found: Optional[int] = None,
+    duration_seconds: Optional[int] = None,
+    error_message: Optional[str] = None
+) -> bool:
+    """Update scan history entry"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    updates = []
+    params = []
+    
+    if completed_at is not None:
+        updates.append("completed_at = ?")
+        params.append(completed_at)
+    
+    if status is not None:
+        updates.append("status = ?")
+        params.append(status)
+    
+    if files_scanned is not None:
+        updates.append("files_scanned = ?")
+        params.append(files_scanned)
+    
+    if threats_found is not None:
+        updates.append("threats_found = ?")
+        params.append(threats_found)
+    
+    if duration_seconds is not None:
+        updates.append("duration_seconds = ?")
+        params.append(duration_seconds)
+    
+    if error_message is not None:
+        updates.append("error_message = ?")
+        params.append(error_message)
+    
+    if not updates:
+        conn.close()
+        return False
+    
+    params.append(history_id)
+    
+    cursor.execute(f"""
+        UPDATE scan_history 
+        SET {', '.join(updates)}
+        WHERE id = ?
+    """, params)
+    
+    success = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    
+    return success
+
+
+def get_scan_history(limit: int = 50) -> List[Dict[str, Any]]:
+    """Get scan history"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT * FROM scan_history 
+        ORDER BY started_at DESC 
+        LIMIT ?
+    """, (limit,))
+    
+    rows = cursor.fetchall()
+    conn.close()
+    
+    return [dict(row) for row in rows]
 
 # Initialize database on module import
 init_database()
