@@ -90,35 +90,34 @@ class FSWatcher:
         self.paths = set()
         self.enabled = False
     
-   def start(self, paths: list):
-    """Start watching specified paths"""
-    if self.enabled:
-        return
-    
-    # Validate paths - only check paths that exist
-    valid = [p for p in paths if os.path.exists(p)]
-    
-    # For production/testing: allow starting with empty paths
-    # (useful for demo/testing when no valid paths provided)
-    if not valid:
-        print(f"⚠️  WARNING: No valid watch paths found from: {paths}")
-        print(f"⚠️  Protection enabled but not monitoring any directories")
+    def start(self, paths: list):
+        """Start watching specified paths"""
+        if self.enabled:
+            return
+        
+        # Validate paths - only check paths that exist
+        valid = [p for p in paths if os.path.exists(p)]
+        
+        # For production/testing: allow starting with empty paths
+        if not valid:
+            print(f"⚠️  WARNING: No valid watch paths found from: {paths}")
+            print(f"⚠️  Protection enabled but not monitoring any directories")
+            self.enabled = True
+            self.paths = set()
+            return
+        
+        # Create observer with valid paths
+        handler = _EventHandler(self.work_q)
+        self.observer = Observer()
+        
+        for p in valid:
+            self.observer.schedule(handler, p, recursive=True)
+        
+        self.observer.start()
+        self.paths = set(valid)
         self.enabled = True
-        self.paths = set()
-        return
-    
-    # Create observer with valid paths
-    handler = _EventHandler(self.work_q)
-    self.observer = Observer()
-    
-    for p in valid:
-        self.observer.schedule(handler, p, recursive=True)
-    
-    self.observer.start()
-    self.paths = set(valid)
-    self.enabled = True
-    
-    print(f"✅ File system watcher started: {len(valid)} paths")
+        
+        print(f"✅ File system watcher started: {len(valid)} paths")
     
     def stop(self):
         """Stop watching"""
