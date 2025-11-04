@@ -16,6 +16,7 @@ from database.db import (
     update_protection_settings
 )
 from middleware.rate_limiter import limiter, READ_LIMIT, WRITE_LIMIT
+from core.quarantine import quarantine_file
 
 router = APIRouter(prefix="/api/protection", tags=["protection"])
 
@@ -189,10 +190,32 @@ def _consumer_loop():
                 quarantined=False
             )
             
-            # TODO: Auto-quarantine if threshold exceeded
-            # settings = get_protection_settings()
-            # if settings["auto_quarantine"] and threat_score >= settings["threat_threshold"]:
-            #     quarantine_file(path, reasons=[{"type": "ml", "detail": ml_result}])
+            # Auto-quarantine if enabled and threshold exceeded
+            settings = get_protection_settings()
+            if settings["auto_quarantine"] and threat_score >= settings["threat_threshold"]:
+                quarantine_result = quarantine_file(
+                    source_path=path,
+                    reason=f"Auto-quarantined: Threat score {threat_score}",
+                    threat_score=threat_score,
+                    threat_level=threat_level,
+                    detection_method="realtime_protection"
+                )
+                
+                if quarantine_result:
+                    print(f"🔒 Auto-quarantined: {path}")
+                    
+                    # Update database to mark as quarantined
+                    from database.db import get_connection
+                    conn = get_connection()
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        UPDATE fs_events 
+                        SET quarantined = 1 
+                        WHERE file_path = ? AND file_hash = ?
+                        ORDER BY timestamp DESC LIMIT 1
+                    """, (path, ev.get("hash")))
+                    conn.commit()
+                    conn.close()
             
             print(f"✅ Processed: {path} | Score: {threat_score} | Level: {threat_level}")
             

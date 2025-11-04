@@ -23,6 +23,7 @@ from contextlib import asynccontextmanager
 from api.websocket import router as websocket_router
 from api.google_oauth import router as google_oauth_router
 from api.scans import router as scans_router
+from api.quarantine import router as quarantine_router
 
 
 # ============================================
@@ -133,6 +134,7 @@ app.include_router(ml_router, prefix="/api", tags=["Machine Learning"])
 app.include_router(websocket_router, tags=["WebSocket"])  # No prefix for WebSocket
 app.include_router(google_oauth_router, prefix="/api", tags=["Auth"])
 app.include_router(scans_router)
+app.include_router(quarantine_router)
 
 
 
