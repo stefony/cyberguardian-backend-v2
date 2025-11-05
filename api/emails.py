@@ -87,10 +87,10 @@ def get_email_scanner() -> Optional["EmailScanner"]:
 
 # ============================================
 # ENDPOINTS
-# Mounted under /api (main.py) -> full path /api/emails/...
+# Mounted under /api/emails (main.py) -> full path /api/emails/...
 # ============================================
 
-@router.get("/emails/status")
+@router.get("/status")
 @limiter.limit(READ_LIMIT)
 async def emails_status(request: Request):
     """
@@ -110,7 +110,7 @@ async def emails_status(request: Request):
                    else "Please configure EMAIL_USER and EMAIL_PASSWORD in environment variables"
     }
 
-@router.post("/emails/test-connection")
+@router.post("/test-connection")
 @limiter.limit(WRITE_LIMIT)
 async def emails_test_connection(
     request: Request,
@@ -145,7 +145,7 @@ async def emails_test_connection(
         logger.error(f"Connection test failed: {e}")
         raise HTTPException(status_code=500, detail=f"Connection failed: {str(e)}")
 
-@router.post("/emails/scan", response_model=List[EmailScanResponse])
+@router.post("/scan", response_model=List[EmailScanResponse])
 @limiter.limit(WRITE_LIMIT)
 async def emails_scan(request: Request, body: EmailScanRequest):
     """
@@ -182,7 +182,7 @@ async def emails_scan(request: Request, body: EmailScanRequest):
         logger.error(f"Email scan failed: {e}")
         raise HTTPException(status_code=500, detail=f"Scan failed: {str(e)}")
 
-@router.get("/emails/folders")
+@router.get("/folders")
 @limiter.limit(READ_LIMIT)
 async def emails_folders(request: Request):
     """
@@ -212,7 +212,7 @@ async def emails_folders(request: Request):
         logger.error(f"Failed to get folders: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/emails/stats")
+@router.get("/stats")
 @limiter.limit(READ_LIMIT)
 async def emails_stats(request: Request) -> EmailStatsResponse:
     """
@@ -227,7 +227,7 @@ async def emails_stats(request: Request) -> EmailStatsResponse:
         last_scan=None
     )
 
-@router.get("/emails/recent-scans")
+@router.get("/recent-scans")
 @limiter.limit(READ_LIMIT)
 async def emails_recent_scans(request: Request, limit: int = 20):
     """
@@ -263,7 +263,7 @@ SAMPLE_EMAIL_SCAN = {
     ]
 }
 
-@router.get("/emails/sample")
+@router.get("/sample")
 @limiter.limit(READ_LIMIT)
 async def emails_sample(request: Request):
     return SAMPLE_EMAIL_SCAN
