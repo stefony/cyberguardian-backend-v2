@@ -175,6 +175,83 @@ def init_database():
             company TEXT
         )
     """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_email_accounts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            email_address TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            auth_method TEXT NOT NULL,
+            
+            access_token TEXT,
+            refresh_token TEXT,
+            token_expiry TEXT,
+            
+            imap_host TEXT,
+            imap_port INTEGER,
+            encrypted_password TEXT,
+            
+            auto_scan_enabled INTEGER NOT NULL DEFAULT 1,
+            scan_interval_hours INTEGER NOT NULL DEFAULT 24,
+            folders_to_scan TEXT DEFAULT 'INBOX',
+            
+            total_scanned INTEGER NOT NULL DEFAULT 0,
+            phishing_detected INTEGER NOT NULL DEFAULT 0,
+            last_scan_date TEXT,
+            
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            
+            FOREIGN KEY (user_id) REFERENCES users(id),
+            UNIQUE(user_id, email_address)
+        )
+    """)
+
+    # Email Scan History table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS email_scan_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email_account_id INTEGER NOT NULL,
+            scan_started_at TEXT NOT NULL,
+            scan_completed_at TEXT,
+            emails_scanned INTEGER NOT NULL DEFAULT 0,
+            phishing_detected INTEGER NOT NULL DEFAULT 0,
+            safe_emails INTEGER NOT NULL DEFAULT 0,
+            suspicious_emails INTEGER NOT NULL DEFAULT 0,
+            dangerous_emails INTEGER NOT NULL DEFAULT 0,
+            scan_status TEXT NOT NULL,
+            error_message TEXT,
+            
+            FOREIGN KEY (email_account_id) REFERENCES user_email_accounts(id)
+        )
+    """)
+
+    # Scanned Emails table (detailed results)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS scanned_emails (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scan_history_id INTEGER NOT NULL,
+            email_account_id INTEGER NOT NULL,
+            email_id TEXT NOT NULL,
+            subject TEXT,
+            sender TEXT,
+            recipient TEXT,
+            date TEXT,
+            is_phishing INTEGER NOT NULL DEFAULT 0,
+            phishing_score REAL NOT NULL DEFAULT 0.0,
+            threat_level TEXT NOT NULL,
+            indicators TEXT,
+            urls TEXT,
+            attachments TEXT,
+            recommendations TEXT,
+            scanned_at TEXT NOT NULL,
+            
+            FOREIGN KEY (scan_history_id) REFERENCES email_scan_history(id),
+            FOREIGN KEY (email_account_id) REFERENCES user_email_accounts(id),
+            UNIQUE(email_account_id, email_id)
+        )
+    """)
+    
 
     # Licenses table
     cursor.execute("""
@@ -1209,6 +1286,372 @@ def get_scan_history(limit: int = 50) -> List[Dict[str, Any]]:
     conn.close()
     
     return [dict(row) for row in rows]
+
+# ADD THESE FUNCTIONS AT THE END OF database/db.py (before init_database() call)
+
+# ========== USER EMAIL ACCOUNTS FUNCTIONS ==========
+
+def add_email_account(
+    user_id: str,
+    email_address: str,
+    provider: str,
+    auth_method: str,
+    imap_host: Optional[str] = None,
+    imap_port: Optional[int] = None,
+    encrypted_password: Optional[str] = None,
+    access_token: Optional[str] = None,
+    refresh_token: Optional[str] = None,
+    token_expiry: Optional[str] = None
+) -> int:
+    """Add email account for user"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    now = datetime.now().isoformat()
+    
+    cursor.execute("""
+        INSERT INTO user_email_accounts 
+        (user_id, email_address, provider, auth_method, imap_host, imap_port,
+         encrypted_password, access_token, refresh_token, token_expiry,
+         created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (user_id, email_address, provider, auth_method, imap_host, imap_port,
+          encrypted_password, access_token, refresh_token, token_expiry, now, now))
+    
+    account_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    
+    return account_id
+
+
+def get_user_email_accounts(user_id: str) -> List[Dict[str, Any]]:
+    """Get all email accounts for a user"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT * FROM user_email_accounts 
+        WHERE user_id = ?
+        ORDER BY created_at DESC
+    """, (user_id,))
+    
+    rows = cursor.fetchall()
+    conn.close()
+    
+    return [dict(row) for row in rows]
+
+
+def get_email_account(account_id: int) -> Optional[Dict[str, Any]]:
+    """Get single email account"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM user_email_accounts WHERE id = ?", (account_id,))
+    row = cursor.fetchone()
+    conn.close()
+    
+    return dict(row) if row else None
+
+
+def get_email_account_by_email(user_id: str, email_address: str) -> Optional[Dict[str, Any]]:
+    """Get email account by email address"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT * FROM user_email_accounts 
+        WHERE user_id = ? AND email_address = ?
+    """, (user_id, email_address))
+    
+    row = cursor.fetchone()
+    conn.close()
+    
+    return dict(row) if row else None
+
+
+def update_email_account(
+    account_id: int,
+    auto_scan_enabled: Optional[bool] = None,
+    scan_interval_hours: Optional[int] = None,
+    folders_to_scan: Optional[str] = None,
+    access_token: Optional[str] = None,
+    refresh_token: Optional[str] = None,
+    token_expiry: Optional[str] = None
+) -> bool:
+    """Update email account settings"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    updates = ["updated_at = ?"]
+    params = [datetime.now().isoformat()]
+    
+    if auto_scan_enabled is not None:
+        updates.append("auto_scan_enabled = ?")
+        params.append(int(auto_scan_enabled))
+    
+    if scan_interval_hours is not None:
+        updates.append("scan_interval_hours = ?")
+        params.append(scan_interval_hours)
+    
+    if folders_to_scan is not None:
+        updates.append("folders_to_scan = ?")
+        params.append(folders_to_scan)
+    
+    if access_token is not None:
+        updates.append("access_token = ?")
+        params.append(access_token)
+    
+    if refresh_token is not None:
+        updates.append("refresh_token = ?")
+        params.append(refresh_token)
+    
+    if token_expiry is not None:
+        updates.append("token_expiry = ?")
+        params.append(token_expiry)
+    
+    params.append(account_id)
+    
+    cursor.execute(f"""
+        UPDATE user_email_accounts 
+        SET {', '.join(updates)}
+        WHERE id = ?
+    """, params)
+    
+    success = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    
+    return success
+
+
+def delete_email_account(account_id: int) -> bool:
+    """Delete email account"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("DELETE FROM user_email_accounts WHERE id = ?", (account_id,))
+    
+    success = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    
+    return success
+
+
+def update_email_scan_stats(
+    account_id: int,
+    emails_scanned: int,
+    phishing_detected: int
+) -> bool:
+    """Update email account scan statistics"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    now = datetime.now().isoformat()
+    
+    cursor.execute("""
+        UPDATE user_email_accounts 
+        SET total_scanned = total_scanned + ?,
+            phishing_detected = phishing_detected + ?,
+            last_scan_date = ?,
+            updated_at = ?
+        WHERE id = ?
+    """, (emails_scanned, phishing_detected, now, now, account_id))
+    
+    success = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    
+    return success
+
+
+# ========== EMAIL SCAN HISTORY FUNCTIONS ==========
+
+def add_email_scan_history(
+    email_account_id: int,
+    scan_started_at: str,
+    scan_status: str = "running"
+) -> int:
+    """Add email scan history entry"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        INSERT INTO email_scan_history 
+        (email_account_id, scan_started_at, scan_status)
+        VALUES (?, ?, ?)
+    """, (email_account_id, scan_started_at, scan_status))
+    
+    history_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    
+    return history_id
+
+
+def update_email_scan_history(
+    history_id: int,
+    scan_completed_at: Optional[str] = None,
+    emails_scanned: Optional[int] = None,
+    phishing_detected: Optional[int] = None,
+    safe_emails: Optional[int] = None,
+    suspicious_emails: Optional[int] = None,
+    dangerous_emails: Optional[int] = None,
+    scan_status: Optional[str] = None,
+    error_message: Optional[str] = None
+) -> bool:
+    """Update email scan history"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    updates = []
+    params = []
+    
+    if scan_completed_at is not None:
+        updates.append("scan_completed_at = ?")
+        params.append(scan_completed_at)
+    
+    if emails_scanned is not None:
+        updates.append("emails_scanned = ?")
+        params.append(emails_scanned)
+    
+    if phishing_detected is not None:
+        updates.append("phishing_detected = ?")
+        params.append(phishing_detected)
+    
+    if safe_emails is not None:
+        updates.append("safe_emails = ?")
+        params.append(safe_emails)
+    
+    if suspicious_emails is not None:
+        updates.append("suspicious_emails = ?")
+        params.append(suspicious_emails)
+    
+    if dangerous_emails is not None:
+        updates.append("dangerous_emails = ?")
+        params.append(dangerous_emails)
+    
+    if scan_status is not None:
+        updates.append("scan_status = ?")
+        params.append(scan_status)
+    
+    if error_message is not None:
+        updates.append("error_message = ?")
+        params.append(error_message)
+    
+    if not updates:
+        conn.close()
+        return False
+    
+    params.append(history_id)
+    
+    cursor.execute(f"""
+        UPDATE email_scan_history 
+        SET {', '.join(updates)}
+        WHERE id = ?
+    """, params)
+    
+    success = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    
+    return success
+
+
+def get_email_scan_history(email_account_id: int, limit: int = 50) -> List[Dict[str, Any]]:
+    """Get email scan history for account"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT * FROM email_scan_history 
+        WHERE email_account_id = ?
+        ORDER BY scan_started_at DESC 
+        LIMIT ?
+    """, (email_account_id, limit))
+    
+    rows = cursor.fetchall()
+    conn.close()
+    
+    return [dict(row) for row in rows]
+
+
+# ========== SCANNED EMAILS FUNCTIONS ==========
+
+def add_scanned_email(
+    scan_history_id: int,
+    email_account_id: int,
+    email_id: str,
+    subject: str,
+    sender: str,
+    date: str,
+    is_phishing: bool,
+    phishing_score: float,
+    threat_level: str,
+    indicators: List[str],
+    urls: List[str],
+    attachments: List[str],
+    recommendations: List[str],
+    recipient: Optional[str] = None
+) -> int:
+    """Add scanned email result"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    now = datetime.now().isoformat()
+    indicators_json = json.dumps(indicators)
+    urls_json = json.dumps(urls)
+    attachments_json = json.dumps(attachments)
+    recommendations_json = json.dumps(recommendations)
+    
+    try:
+        cursor.execute("""
+            INSERT INTO scanned_emails 
+            (scan_history_id, email_account_id, email_id, subject, sender, recipient,
+             date, is_phishing, phishing_score, threat_level, indicators, urls,
+             attachments, recommendations, scanned_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (scan_history_id, email_account_id, email_id, subject, sender, recipient,
+              date, int(is_phishing), phishing_score, threat_level, indicators_json,
+              urls_json, attachments_json, recommendations_json, now))
+        
+        email_result_id = cursor.lastrowid
+        conn.commit()
+    except sqlite3.IntegrityError:
+        # Email already exists (UNIQUE constraint)
+        conn.close()
+        return -1
+    
+    conn.close()
+    return email_result_id
+
+
+def get_scanned_emails(email_account_id: int, limit: int = 100) -> List[Dict[str, Any]]:
+    """Get scanned emails for account"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT * FROM scanned_emails 
+        WHERE email_account_id = ?
+        ORDER BY scanned_at DESC 
+        LIMIT ?
+    """, (email_account_id, limit))
+    
+    rows = cursor.fetchall()
+    conn.close()
+    
+    emails = []
+    for row in rows:
+        email = dict(row)
+        email["indicators"] = json.loads(email["indicators"])
+        email["urls"] = json.loads(email["urls"])
+        email["attachments"] = json.loads(email["attachments"])
+        email["recommendations"] = json.loads(email["recommendations"])
+        emails.append(email)
+    
+    return emails
 
 # Initialize database on module import
 init_database()
