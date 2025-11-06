@@ -38,6 +38,7 @@ def init_database():
             description TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'active',
             details TEXT,
+            confidence_score REAL DEFAULT 0.0,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
@@ -297,7 +298,8 @@ def add_threat(
     severity: str,
     description: str,
     details: Optional[Dict[str, Any]] = None,
-    timestamp: Optional[str] = None
+    timestamp: Optional[str] = None,
+    confidence_score: float = 0.0  # ← ДОБАВИ ТОЗИ ПАРАМЕТЪР
 ) -> int:
     """
     Add a new threat to the database
@@ -313,9 +315,9 @@ def add_threat(
     
     cursor.execute("""
         INSERT INTO threats 
-        (timestamp, source_ip, threat_type, severity, description, status, details, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)
-    """, (threat_timestamp, source_ip, threat_type, severity, description, details_json, now, now))
+        (timestamp, source_ip, threat_type, severity, description, status, details, confidence_score, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)
+    """, (threat_timestamp, source_ip, threat_type, severity, description, details_json, confidence_score, now, now))
     
     threat_id = cursor.lastrowid
     conn.commit()

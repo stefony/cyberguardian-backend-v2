@@ -59,43 +59,46 @@ def initialize_sample_threats():
     if len(existing) == 0:
         # Add some initial threats for testing
         sample_threats = [
-            {
-                "source_ip": "198.51.100.42",
-                "threat_type": "Brute Force",
-                "severity": "critical",
-                "description": "Multiple failed login attempts detected",
-                "details": {
-                    "attempts": 15,
-                    "target": "SSH Port 22",
-                    "duration": "5 minutes"
-                },
-                "timestamp": "2025-01-14T09:41:00"
-            },
-            {
-                "source_ip": "203.0.113.11",
-                "threat_type": "Phishing",
-                "severity": "high",
-                "description": "Suspicious email with malicious link detected",
-                "details": {
-                    "email_subject": "Urgent: Verify Your Account",
-                    "sender": "noreply@suspicious-domain.xyz",
-                    "recipients": 3
-                },
-                "timestamp": "2025-01-14T09:12:00"
-            },
-            {
-                "source_ip": "192.0.2.156",
-                "threat_type": "Malware",
-                "severity": "medium",
-                "description": "Malicious file detected in download folder",
-                "details": {
-                    "file_name": "malware.sig",
-                    "file_size": "2.3 MB",
-                    "hash": "a1b2c3d4e5f6..."
-                },
-                "timestamp": "2025-01-14T08:57:00"
-            },
-        ]
+    {
+        "source_ip": "198.51.100.42",
+        "threat_type": "Brute Force",
+        "severity": "critical",
+        "description": "Multiple failed login attempts detected",
+        "confidence_score": 95.5,  # ← ДОБАВИ
+        "details": {
+            "attempts": 15,
+            "target": "SSH Port 22",
+            "duration": "5 minutes"
+        },
+        "timestamp": "2025-01-14T09:41:00"
+    },
+    {
+        "source_ip": "203.0.113.11",
+        "threat_type": "Phishing",
+        "severity": "high",
+        "description": "Suspicious email with malicious link detected",
+        "confidence_score": 87.3,  # ← ДОБАВИ
+        "details": {
+            "email_subject": "Urgent: Verify Your Account",
+            "sender": "noreply@suspicious-domain.xyz",
+            "recipients": 3
+        },
+        "timestamp": "2025-01-14T09:12:00"
+    },
+    {
+        "source_ip": "192.0.2.156",
+        "threat_type": "Malware",
+        "severity": "medium",
+        "description": "Malicious file detected in download folder",
+        "confidence_score": 72.8,  # ← ДОБАВИ
+        "details": {
+            "file_name": "malware.sig",
+            "file_size": "2.3 MB",
+            "hash": "a1b2c3d4e5f6..."
+        },
+        "timestamp": "2025-01-14T08:57:00"
+    },
+]
         
         for threat in sample_threats:
             db_add_threat(
@@ -104,7 +107,8 @@ def initialize_sample_threats():
                 severity=threat["severity"],
                 description=threat["description"],
                 details=threat.get("details"),
-                timestamp=threat.get("timestamp")
+                timestamp=threat.get("timestamp"),
+                 confidence_score=threat.get("confidence_score", 0.0)
             )
         
         print("✅ Sample threats initialized in database")
@@ -240,3 +244,86 @@ async def dismiss_threat(request: Request, action: ThreatAction):
         "threat_id": action.threat_id,
         "reason": action.reason or "No reason provided"
     }
+    # ============================================
+# BATCH OPERATIONS (NEW - Feature #2)
+# ============================================
+
+class BatchThreatAction(BaseModel):
+    threat_ids: List[int]
+    action: str  # block, dismiss, delete
+    reason: Optional[str] = None
+
+
+@router.post("/threats/batch")
+@limiter.limit(WRITE_LIMIT)
+async def batch_threat_action(request: Request, batch: BatchThreatAction):
+    """
+    Perform batch action on multiple threats
+    
+    Actions: block, dismiss, delete
+    """
+    if not batch.threat_ids:
+        raise HTTPException(status_code=400, detail="No threat IDs provided")
+    
+    results = {
+        "success": [],
+        "failed": []
+    }
+    
+    for threat_id in batch.threat_ids:
+        threat = db_get_threat_by_id(threat_id)
+        
+        if not threat:
+            results["failed"].append({
+                "threat_id": threat_id,
+                "reason": "Threat not found"
+            })
+            continue
+        
+        try:
+            if batch.action == "block":
+                success = db_update_threat_status(
+                    threat_id=threat_id,
+                    status="blocked",
+                    action="block",
+                    reason=batch.reason
+                )
+            elif batch.action == "dismiss":
+                success = db_update_threat_status(
+                    threat_id=threat_id,
+                    status="dismissed",
+                    action="dismiss",
+                    reason=batch.reason
+                )
+            elif batch.action == "delete":
+                # Delete threat from database
+                import sqlite3
+                conn = sqlite3.connect('database/cyberguardian.db')
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM threats WHERE id = ?", (threat_id,))
+                conn.commit()
+                conn.close()
+                success = True
+            else:
+                raise HTTPException(status_code=400, detail=f"Invalid action: {batch.action}")
+            
+            if success:
+                results["success"].append(threat_id)
+            else:
+                results["failed"].append({
+                    "threat_id": threat_id,
+                    "reason": "Action failed"
+                })
+        
+        except Exception as e:
+            results["failed"].append({
+                "threat_id": threat_id,
+                "reason": str(e)
+            })
+    
+    return {
+        "success": True,
+        "message": f"{len(results['success'])} threats processed successfully",
+        "results": results
+    }
+    
