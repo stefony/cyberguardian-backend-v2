@@ -27,10 +27,11 @@ class Threat(BaseModel):
     timestamp: str
     source_ip: str
     threat_type: str
-    severity: str  # critical, high, medium, low
+    severity: str
     description: str
-    status: str  # active, blocked, dismissed
+    status: str
     details: Optional[Dict[str, Any]] = None
+    confidence_score: Optional[float] = None  # ← ТРЯБВА ДА Е ТУК
     created_at: str
     updated_at: str
 

@@ -338,7 +338,13 @@ def get_threats(
     conn = get_connection()
     cursor = conn.cursor()
     
-    query = "SELECT * FROM threats WHERE 1=1"
+    query = """
+        SELECT id, timestamp, source_ip, threat_type, severity, 
+               description, status, details, confidence_score, 
+               created_at, updated_at
+        FROM threats 
+        WHERE 1=1
+    """
     params = []
     
     if severity:
@@ -356,12 +362,22 @@ def get_threats(
     rows = cursor.fetchall()
     conn.close()
     
-    # Convert to list of dicts and parse JSON details
+    # Convert to list of dicts with explicit column mapping
     threats = []
     for row in rows:
-        threat = dict(row)
-        if threat["details"]:
-            threat["details"] = json.loads(threat["details"])
+        threat = {
+            "id": row["id"],
+            "timestamp": row["timestamp"],
+            "source_ip": row["source_ip"],
+            "threat_type": row["threat_type"],
+            "severity": row["severity"],
+            "description": row["description"],
+            "status": row["status"],
+            "details": json.loads(row["details"]) if row["details"] else None,
+            "confidence_score": row["confidence_score"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"]
+        }
         threats.append(threat)
     
     return threats
