@@ -87,16 +87,16 @@ def initialize_sample_analytics_data():
             # Add sample scans
             sample_scans = [
                 ("2025-01-14 09:30:00", "file", "completed", 1),
-        ("2025-01-14 08:15:00", "directory", "completed", 0),
-        ("2025-01-13 14:20:00", "full_system", "completed", 2),
-        ("2025-01-13 11:45:00", "process", "completed", 1),
-        ("2025-01-12 16:30:00", "file", "completed", 1),
+                ("2025-01-14 08:15:00", "directory", "completed", 0),
+                ("2025-01-13 14:20:00", "full_system", "completed", 2),
+                ("2025-01-13 11:45:00", "process", "completed", 1),
+                ("2025-01-12 16:30:00", "file", "completed", 1),
             ]
             
             cursor.executemany(
                 """INSERT INTO scans (started_at, scan_type, status, threats_found)
-           VALUES (?, ?, ?, ?)""",
-        sample_scans
+                   VALUES (?, ?, ?, ?)""",
+                sample_scans
             )
             print("✅ Sample scans data initialized")
         
@@ -364,3 +364,144 @@ async def get_top_threats(request: Request, limit: int = Query(5, ge=1, le=20)):
             conn.close()
         except:
             pass
+
+
+@router.get("/security-posture")
+@limiter.limit(READ_LIMIT)
+async def get_security_posture(request: Request):
+    """
+    Calculate Security Posture Score (0-100)
+    
+    Score calculation based on:
+    - Active threats (lower is better)
+    - Protection status
+    - Honeypots active
+    - Recent scan success rate
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Base score
+        score = 100
+        
+        # 1. Active threats penalty (-5 per active threat, max -30)
+        cursor.execute("SELECT COUNT(*) FROM threats WHERE status = 'active'")
+        active_threats = cursor.fetchone()[0]
+        score -= min(active_threats * 5, 30)
+        
+        # 2. Critical threats penalty (-10 per critical threat, max -20)
+        cursor.execute("SELECT COUNT(*) FROM threats WHERE severity = 'critical' AND status = 'active'")
+        critical_threats = cursor.fetchone()[0]
+        score -= min(critical_threats * 10, 20)
+        
+        # 3. Protection status bonus (+10 if enabled)
+        cursor.execute("SELECT enabled FROM protection_settings WHERE id = 1")
+        protection_row = cursor.fetchone()
+        protection_enabled = protection_row[0] if protection_row else 0
+        if protection_enabled:
+            score += 10
+        
+        # 4. Active honeypots bonus (+2 per active honeypot, max +10)
+        cursor.execute("SELECT COUNT(*) FROM honeypots WHERE status = 'active'")
+        active_honeypots = cursor.fetchone()[0]
+        score += min(active_honeypots * 2, 10)
+        
+        # 5. Recent scan success rate
+        cursor.execute("""
+            SELECT COUNT(*) as total,
+                   SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as successful
+            FROM scan_history
+            WHERE started_at >= datetime('now', '-7 days')
+        """)
+        scan_row = cursor.fetchone()
+        total_scans = scan_row[0] if scan_row else 0
+        successful_scans = scan_row[1] if scan_row else 0
+        
+        if total_scans > 0:
+            success_rate = (successful_scans / total_scans) * 100
+            if success_rate < 80:
+                score -= 10
+        
+        # Ensure score is between 0-100
+        score = max(0, min(100, score))
+        
+        # Determine status based on score
+        if score >= 80:
+            status = "excellent"
+            color = "green"
+        elif score >= 60:
+            status = "good"
+            color = "blue"
+        elif score >= 40:
+            status = "fair"
+            color = "yellow"
+        else:
+            status = "poor"
+            color = "red"
+        
+        conn.close()
+        
+        return {
+            "score": score,
+            "status": status,
+            "color": color,
+            "factors": {
+                "active_threats": active_threats,
+                "critical_threats": critical_threats,
+                "protection_enabled": bool(protection_enabled),
+                "active_honeypots": active_honeypots,
+                "recent_scans": total_scans
+            },
+            "last_updated": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to calculate security posture: {str(e)}")
+
+
+@router.get("/recent-incidents")
+@limiter.limit(READ_LIMIT)
+async def get_recent_incidents(request: Request, limit: int = Query(5, ge=1, le=20)):
+    """
+    Get recent security incidents (threats)
+    
+    Returns the most recent threats ordered by timestamp
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT 
+                id,
+                timestamp,
+                source_ip,
+                threat_type,
+                severity,
+                description,
+                status
+            FROM threats
+            ORDER BY timestamp DESC
+            LIMIT ?
+        """, (limit,))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        incidents = []
+        for row in rows:
+            incidents.append({
+                "id": row["id"],
+                "timestamp": row["timestamp"],
+                "source_ip": row["source_ip"],
+                "threat_type": row["threat_type"],
+                "severity": row["severity"],
+                "description": row["description"],
+                "status": row["status"]
+            })
+        
+        return incidents
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get recent incidents: {str(e)}")
