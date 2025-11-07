@@ -3,7 +3,7 @@ CyberGuardian AI - Honeypots API
 Real honeypot management endpoints
 """
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Request
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Request, Depends
 from pydantic import BaseModel
 from typing import List, Optional, Dict
 import logging
@@ -12,6 +12,7 @@ from middleware.rate_limiter import limiter, READ_LIMIT, WRITE_LIMIT
 # Import HoneypotManager
 try:
     from core.honeypot_manager import get_honeypot_manager
+    from api.auth import get_current_user
     HONEYPOT_AVAILABLE = True
 except ImportError as e:
     HONEYPOT_AVAILABLE = False
@@ -252,6 +253,42 @@ async def get_statistics(request: Request):
     except Exception as e:
         logger.error(f"Failed to get statistics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/geo-attacks")
+async def get_honeypot_geo_attacks(
+    limit: int = 100,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get honeypot attacks with geolocation data for map visualization
+    """
+    try:
+        logs = db.get_honeypot_logs(limit=limit)
+        
+        # Filter logs with valid coordinates
+        geo_attacks = []
+        for log in logs:
+            if log.get("latitude") and log.get("longitude"):
+                geo_attacks.append({
+                    "id": log["id"],
+                    "timestamp": log["timestamp"],
+                    "source_ip": log["source_ip"],
+                    "action": log["action"],
+                    "country": log.get("country", "Unknown"),
+                    "city": log.get("city", "Unknown"),
+                    "latitude": log["latitude"],
+                    "longitude": log["longitude"],
+                    "honeypot_id": log["honeypot_id"]
+                })
+        
+        return {
+            "success": True,
+            "total": len(geo_attacks),
+            "attacks": geo_attacks
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.post("/honeypots/test")
 @limiter.limit(WRITE_LIMIT)  # 30 requests per minute

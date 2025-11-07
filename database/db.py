@@ -9,8 +9,52 @@ from typing import List, Optional, Dict, Any
 from pathlib import Path
 import json
 
+
 # Database file path
 DB_PATH = Path(__file__).parent / "cyberguardian.db"
+
+import requests
+
+def get_ip_geolocation(ip: str) -> Dict[str, Any]:
+    """
+    Get geolocation data for an IP address using ip-api.com
+    Returns: dict with country, city, lat, lon
+    """
+    try:
+        # Skip private/local IPs
+        if ip.startswith(('127.', '192.168.', '10.', '172.')):
+            return {
+                "country": "Local",
+                "city": "Local",
+                "latitude": 0.0,
+                "longitude": 0.0
+            }
+        
+        # Call ip-api.com (free, no API key needed)
+        response = requests.get(
+            f"http://ip-api.com/json/{ip}?fields=status,country,city,lat,lon",
+            timeout=3
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("status") == "success":
+                return {
+                    "country": data.get("country", "Unknown"),
+                    "city": data.get("city", "Unknown"),
+                    "latitude": data.get("lat", 0.0),
+                    "longitude": data.get("lon", 0.0)
+                }
+    except Exception as e:
+        print(f"⚠️ Geolocation lookup failed for {ip}: {e}")
+    
+    # Fallback
+    return {
+        "country": "Unknown",
+        "city": "Unknown",
+        "latitude": 0.0,
+        "longitude": 0.0
+    }
 
 
 def get_connection():
@@ -90,15 +134,19 @@ def init_database():
     
     # Honeypot logs table
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS honeypot_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            honeypot_id INTEGER NOT NULL,
-            timestamp TEXT NOT NULL,
-            source_ip TEXT NOT NULL,
-            action TEXT NOT NULL,
-            details TEXT,
-            FOREIGN KEY (honeypot_id) REFERENCES honeypots (id)
-        )
+    CREATE TABLE IF NOT EXISTS honeypot_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    honeypot_id INTEGER NOT NULL,
+    timestamp TEXT NOT NULL,
+    source_ip TEXT NOT NULL,
+    action TEXT NOT NULL,
+    details TEXT,
+    country TEXT,
+    city TEXT,
+    latitude REAL,
+    longitude REAL,
+    FOREIGN KEY (honeypot_id) REFERENCES honeypots (id)
+)
     """)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS fs_events (
@@ -784,7 +832,11 @@ def add_honeypot_log(
     honeypot_id: int,
     source_ip: str,
     action: str,
-    details: Optional[Dict[str, Any]] = None
+    details: Optional[Dict[str, Any]] = None,
+    country: Optional[str] = None,
+    city: Optional[str] = None,
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None
 ) -> int:
     """
     Add a honeypot interaction log
@@ -797,11 +849,19 @@ def add_honeypot_log(
     now = datetime.now().isoformat()
     details_json = json.dumps(details) if details else None
     
+    # Auto-fetch geolocation if not provided
+    if country is None or latitude is None:
+        geo_data = get_ip_geolocation(source_ip)
+        country = geo_data["country"]
+        city = geo_data["city"]
+        latitude = geo_data["latitude"]
+        longitude = geo_data["longitude"]
+    
     cursor.execute("""
         INSERT INTO honeypot_logs 
-        (honeypot_id, timestamp, source_ip, action, details)
-        VALUES (?, ?, ?, ?, ?)
-    """, (honeypot_id, now, source_ip, action, details_json))
+        (honeypot_id, timestamp, source_ip, action, details, country, city, latitude, longitude)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (honeypot_id, now, source_ip, action, details_json, country, city, latitude, longitude))
     
     log_id = cursor.lastrowid
     
