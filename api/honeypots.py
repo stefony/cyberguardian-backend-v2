@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict
 import logging
 from middleware.rate_limiter import limiter, READ_LIMIT, WRITE_LIMIT
+import database.db as db  # ← ДОБАВЕНО
 
 # Import HoneypotManager
 try:
@@ -59,7 +60,7 @@ class StartHoneypotRequest(BaseModel):
 # API ENDPOINTS
 # ============================================
 
-@router.get("/honeypots/status")
+@router.get("/status")  # ← ПРЕМАХНАТО /honeypots
 @limiter.limit(READ_LIMIT)  # 100 requests per minute
 async def get_status(request: Request):
     """
@@ -90,7 +91,7 @@ async def get_status(request: Request):
         logger.error(f"Failed to get honeypot status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/honeypots/start/{honeypot_type}")
+@router.post("/start/{honeypot_type}")  # ← ПРЕМАХНАТО /honeypots
 @limiter.limit(WRITE_LIMIT)  # 30 requests per minute
 async def start_honeypot(request: Request, honeypot_type: str, background_tasks: BackgroundTasks):
     """
@@ -124,7 +125,7 @@ async def start_honeypot(request: Request, honeypot_type: str, background_tasks:
         logger.error(f"Failed to start honeypot: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/honeypots/stop/{honeypot_type}")
+@router.post("/stop/{honeypot_type}")  # ← ПРЕМАХНАТО /honeypots
 @limiter.limit(WRITE_LIMIT)  # 30 requests per minute
 async def stop_honeypot(request: Request, honeypot_type: str):
     """
@@ -158,7 +159,7 @@ async def stop_honeypot(request: Request, honeypot_type: str):
         logger.error(f"Failed to stop honeypot: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/honeypots/start-all")
+@router.post("/start-all")  # ← ПРЕМАХНАТО /honeypots
 @limiter.limit(WRITE_LIMIT)  # 30 requests per minute
 async def start_all_honeypots(request: Request, background_tasks: BackgroundTasks):
     """
@@ -184,7 +185,7 @@ async def start_all_honeypots(request: Request, background_tasks: BackgroundTask
         logger.error(f"Failed to start all honeypots: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/honeypots/stop-all")
+@router.post("/stop-all")  # ← ПРЕМАХНАТО /honeypots
 @limiter.limit(WRITE_LIMIT)  # 30 requests per minute
 async def stop_all_honeypots(request: Request):
     """
@@ -206,7 +207,7 @@ async def stop_all_honeypots(request: Request):
         logger.error(f"Failed to stop all honeypots: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/honeypots/attacks", response_model=List[AttackLogResponse])
+@router.get("/attacks", response_model=List[AttackLogResponse])  # ← ПРЕМАХНАТО /honeypots
 @limiter.limit(READ_LIMIT)  # 100 requests per minute
 async def get_attacks(request: Request, limit: int = 50):
     """
@@ -228,7 +229,7 @@ async def get_attacks(request: Request, limit: int = 50):
         logger.error(f"Failed to get attacks: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/honeypots/statistics", response_model=HoneypotStatsResponse)
+@router.get("/statistics", response_model=HoneypotStatsResponse)  # ← ПРЕМАХНАТО /honeypots
 @limiter.limit(READ_LIMIT)  # 100 requests per minute
 async def get_statistics(request: Request):
     """
@@ -254,7 +255,7 @@ async def get_statistics(request: Request):
         logger.error(f"Failed to get statistics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/geo-attacks")
+@router.get("/geo-attacks")  # ← БЕЗ /honeypots - prefix-ът го добавя
 async def get_honeypot_geo_attacks(
     limit: int = 100,
     current_user: dict = Depends(get_current_user)
@@ -290,7 +291,7 @@ async def get_honeypot_geo_attacks(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/honeypots/test")
+@router.post("/test")  # ← ПРЕМАХНАТО /honeypots
 @limiter.limit(WRITE_LIMIT)  # 30 requests per minute
 async def test_honeypot_system(request: Request):
     """
