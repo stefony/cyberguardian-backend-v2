@@ -128,7 +128,7 @@ app.include_router(ai_insights_router, prefix="/api", tags=["AI Insights"])
 app.include_router(analytics_router, prefix="/api/analytics", tags=["Analytics"])
 app.include_router(emails_router, prefix="/api/emails", tags=["Emails"])
 app.include_router(settings_router, prefix="/api", tags=["Settings"])
-app.include_router(honeypots_router, prefix="/api", tags=["Honeypots"])
+app.include_router(honeypots_router, prefix="/api/honeypots", tags=["Honeypots"])
 app.include_router(protection_router)
 app.include_router(ml_router, prefix="/api", tags=["Machine Learning"])
 app.include_router(websocket_router, tags=["WebSocket"])  # No prefix for WebSocket
