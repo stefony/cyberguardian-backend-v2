@@ -241,7 +241,8 @@ async def get_trends(request: Request):
             }
         ]
     }
-    class WhatIfScenario(BaseModel):
+    
+class WhatIfScenario(BaseModel):
     """What-if scenario input"""
     threats_per_hour: int
     attack_types: List[str]
@@ -265,7 +266,7 @@ class WhatIfPrediction(BaseModel):
 
 
 @router.post("/ai/what-if", response_model=WhatIfPrediction)
-@limiter.limit(READ_LIMIT)  # 100 requests per minute
+@limiter.limit(READ_LIMIT)
 async def simulate_scenario(request: Request, scenario: WhatIfScenario):
     """
     Simulate a threat scenario and predict system impact
@@ -291,7 +292,7 @@ async def simulate_scenario(request: Request, scenario: WhatIfScenario):
         if scenario.current_defenses.get("honeypots", False):
             base_block_rate += 0.02
         
-        base_block_rate = min(base_block_rate, 0.98)  # Max 98% block rate
+        base_block_rate = min(base_block_rate, 0.98)
         
         estimated_blocks = int(threat_volume * base_block_rate)
         estimated_breaches = threat_volume - estimated_blocks
@@ -300,11 +301,9 @@ async def simulate_scenario(request: Request, scenario: WhatIfScenario):
         cpu_baseline = 15.0
         memory_baseline = 20.0
         
-        # Higher threat volume = more CPU/memory usage
         cpu_usage = min(cpu_baseline + (scenario.threats_per_hour * 0.5), 95.0)
         memory_usage = min(memory_baseline + (scenario.threats_per_hour * 0.3), 90.0)
         
-        # Disk I/O and network bandwidth
         disk_io = min(10 + (scenario.threats_per_hour * 0.2), 500)
         network_bandwidth = min(50 + (scenario.threats_per_hour * 1.5), 1000)
         
