@@ -241,3 +241,114 @@ async def get_trends(request: Request):
             }
         ]
     }
+    class WhatIfScenario(BaseModel):
+    """What-if scenario input"""
+    threats_per_hour: int
+    attack_types: List[str]
+    duration_hours: int
+    current_defenses: Dict[str, bool]
+
+
+class WhatIfPrediction(BaseModel):
+    """What-if prediction output"""
+    scenario: str
+    threat_volume: int
+    estimated_blocks: int
+    estimated_breaches: int
+    cpu_usage_percent: float
+    memory_usage_percent: float
+    disk_io_mbps: float
+    network_bandwidth_mbps: float
+    recommendations: List[str]
+    risk_level: str
+    confidence: float
+
+
+@router.post("/ai/what-if", response_model=WhatIfPrediction)
+@limiter.limit(READ_LIMIT)  # 100 requests per minute
+async def simulate_scenario(request: Request, scenario: WhatIfScenario):
+    """
+    Simulate a threat scenario and predict system impact
+    
+    Args:
+        scenario: What-if scenario parameters
+        
+    Returns:
+        Predicted impact on system resources and security
+    """
+    try:
+        # Calculate threat volume
+        threat_volume = scenario.threats_per_hour * scenario.duration_hours
+        
+        # Calculate defense effectiveness (mock ML prediction)
+        base_block_rate = 0.85
+        if scenario.current_defenses.get("firewall", False):
+            base_block_rate += 0.05
+        if scenario.current_defenses.get("ids", False):
+            base_block_rate += 0.05
+        if scenario.current_defenses.get("waf", False):
+            base_block_rate += 0.03
+        if scenario.current_defenses.get("honeypots", False):
+            base_block_rate += 0.02
+        
+        base_block_rate = min(base_block_rate, 0.98)  # Max 98% block rate
+        
+        estimated_blocks = int(threat_volume * base_block_rate)
+        estimated_breaches = threat_volume - estimated_blocks
+        
+        # Calculate resource impact
+        cpu_baseline = 15.0
+        memory_baseline = 20.0
+        
+        # Higher threat volume = more CPU/memory usage
+        cpu_usage = min(cpu_baseline + (scenario.threats_per_hour * 0.5), 95.0)
+        memory_usage = min(memory_baseline + (scenario.threats_per_hour * 0.3), 90.0)
+        
+        # Disk I/O and network bandwidth
+        disk_io = min(10 + (scenario.threats_per_hour * 0.2), 500)
+        network_bandwidth = min(50 + (scenario.threats_per_hour * 1.5), 1000)
+        
+        # Generate recommendations
+        recommendations = []
+        if cpu_usage > 70:
+            recommendations.append("Scale up CPU resources - predicted high load")
+        if memory_usage > 70:
+            recommendations.append("Increase memory allocation for threat detection")
+        if estimated_breaches > 50:
+            recommendations.append("Enable additional defense layers (WAF, IDS)")
+        if scenario.threats_per_hour > 500:
+            recommendations.append("Consider DDoS mitigation service")
+        if not scenario.current_defenses.get("honeypots", False):
+            recommendations.append("Deploy honeypots to detect and deflect attacks")
+        
+        # Determine risk level
+        breach_rate = estimated_breaches / threat_volume if threat_volume > 0 else 0
+        if breach_rate > 0.15:
+            risk_level = "critical"
+        elif breach_rate > 0.08:
+            risk_level = "high"
+        elif breach_rate > 0.03:
+            risk_level = "medium"
+        else:
+            risk_level = "low"
+        
+        # Confidence based on scenario complexity
+        confidence = 0.92 - (len(scenario.attack_types) * 0.02)
+        confidence = max(confidence, 0.75)
+        
+        return WhatIfPrediction(
+            scenario=f"{scenario.threats_per_hour} threats/hour for {scenario.duration_hours}h",
+            threat_volume=threat_volume,
+            estimated_blocks=estimated_blocks,
+            estimated_breaches=estimated_breaches,
+            cpu_usage_percent=round(cpu_usage, 1),
+            memory_usage_percent=round(memory_usage, 1),
+            disk_io_mbps=round(disk_io, 1),
+            network_bandwidth_mbps=round(network_bandwidth, 1),
+            recommendations=recommendations,
+            risk_level=risk_level,
+            confidence=round(confidence, 2)
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Simulation failed: {str(e)}")
