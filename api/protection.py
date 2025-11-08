@@ -292,8 +292,15 @@ async def set_profile(request: Request, profile_name: str):
         profile = SENSITIVITY_PROFILES[profile_name]
         threshold = profile["threshold"]
         
+        # Get current settings
+        current_settings = get_protection_settings()
+        
         # Update threat threshold in settings
-        db.update_protection_settings(threat_threshold=threshold)
+        db.update_protection_settings(
+            enabled=current_settings["enabled"],
+            watch_paths=current_settings["paths"] if isinstance(current_settings["paths"], list) else [],
+            threat_threshold=threshold
+        )
         
         return {
             "success": True,
