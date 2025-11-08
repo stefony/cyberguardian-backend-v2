@@ -173,7 +173,21 @@ def init_database():
         updated_at TEXT NOT NULL,
         CHECK (id = 1)
     )  
-""") 
+    """) 
+    
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS exclusions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type TEXT NOT NULL,
+        value TEXT NOT NULL,
+        reason TEXT,
+        created_at TEXT NOT NULL,
+        created_by TEXT,
+        UNIQUE(type, value)
+    )
+""")
+
+
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS scan_schedules (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1730,6 +1744,80 @@ def get_scanned_emails(email_account_id: int, limit: int = 100) -> List[Dict[str
         emails.append(email)
     
     return emails
+
+# ========== EXCLUSIONS FUNCTIONS ==========
+
+def add_exclusion(
+    exclusion_type: str,
+    value: str,
+    reason: Optional[str] = None,
+    created_by: Optional[str] = None
+) -> int:
+    """Add new exclusion"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    now = datetime.now().isoformat()
+    
+    try:
+        cursor.execute("""
+            INSERT INTO exclusions (type, value, reason, created_at, created_by)
+            VALUES (?, ?, ?, ?, ?)
+        """, (exclusion_type, value, reason, now, created_by))
+        
+        exclusion_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        return exclusion_id
+    except sqlite3.IntegrityError:
+        conn.close()
+        return -1  # Already exists
+
+
+def get_exclusions(exclusion_type: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Get all exclusions or filter by type"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    if exclusion_type:
+        cursor.execute("SELECT * FROM exclusions WHERE type = ? ORDER BY created_at DESC", (exclusion_type,))
+    else:
+        cursor.execute("SELECT * FROM exclusions ORDER BY created_at DESC")
+    
+    rows = cursor.fetchall()
+    conn.close()
+    
+    return [dict(row) for row in rows]
+
+
+def delete_exclusion(exclusion_id: int) -> bool:
+    """Delete exclusion by ID"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("DELETE FROM exclusions WHERE id = ?", (exclusion_id,))
+    success = cursor.rowcount > 0
+    
+    conn.commit()
+    conn.close()
+    
+    return success
+
+
+def is_excluded(exclusion_type: str, value: str) -> bool:
+    """Check if a value is excluded"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT COUNT(*) as count FROM exclusions 
+        WHERE type = ? AND value = ?
+    """, (exclusion_type, value))
+    
+    result = cursor.fetchone()
+    conn.close()
+    
+    return result["count"] > 0
 
 # Initialize database on module import
 init_database()
