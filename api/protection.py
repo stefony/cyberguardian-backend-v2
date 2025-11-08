@@ -15,8 +15,11 @@ from database.db import (
     get_protection_settings,
     update_protection_settings
 )
+from database import db
 from middleware.rate_limiter import limiter, READ_LIMIT, WRITE_LIMIT
 from core.quarantine import quarantine_file
+from fastapi import APIRouter, Request, HTTPException
+
 
 router = APIRouter(prefix="/api/protection", tags=["protection"])
 
@@ -215,6 +218,7 @@ def _consumer_loop():
                         ORDER BY timestamp DESC LIMIT 1
                     """, (path, ev.get("hash")))
                     conn.commit()
+                    
                     conn.close()
             
             print(f"✅ Processed: {path} | Score: {threat_score} | Level: {threat_level}")
@@ -238,3 +242,66 @@ def _consumer_loop():
                 pass
     
     print("🛑 Protection consumer loop stopped")
+
+
+# ============================================
+# SENSITIVITY PROFILES
+# ============================================
+
+# Sensitivity Profiles
+SENSITIVITY_PROFILES = {
+    "low": {
+        "name": "Low Sensitivity",
+        "description": "Minimal false positives, catches only obvious threats",
+        "threshold": 90,
+        "color": "green"
+    },
+    "medium": {
+        "name": "Medium Sensitivity",
+        "description": "Balance between security and usability",
+        "threshold": 75,
+        "color": "yellow"
+    },
+    "high": {
+        "name": "High Sensitivity",
+        "description": "Maximum protection, aggressive detection",
+        "threshold": 50,
+        "color": "red"
+    }
+}
+
+
+@router.get("/api/protection/profiles")
+@limiter.limit(READ_LIMIT)
+async def get_profiles(request: Request):
+    """Get available sensitivity profiles"""
+    return {
+        "success": True,
+        "profiles": SENSITIVITY_PROFILES
+    }
+
+
+@router.post("/api/protection/profile/{profile_name}")
+@limiter.limit(WRITE_LIMIT)
+async def set_profile(request: Request, profile_name: str):
+    """Set active sensitivity profile"""
+    try:
+        if profile_name not in SENSITIVITY_PROFILES:
+            raise HTTPException(status_code=400, detail="Invalid profile name")
+        
+        profile = SENSITIVITY_PROFILES[profile_name]
+        threshold = profile["threshold"]
+        
+        # Update threat threshold in settings
+        db.update_protection_settings(threat_threshold=threshold)
+        
+        return {
+            "success": True,
+            "profile": profile_name,
+            "threshold": threshold,
+            "message": f"Profile set to {profile['name']}"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
