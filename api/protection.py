@@ -271,7 +271,7 @@ SENSITIVITY_PROFILES = {
 }
 
 
-@router.get("/api/protection/profiles")
+@router.get("/profiles")
 @limiter.limit(READ_LIMIT)
 async def get_profiles(request: Request):
     """Get available sensitivity profiles"""
@@ -281,7 +281,7 @@ async def get_profiles(request: Request):
     }
 
 
-@router.post("/api/protection/profile/{profile_name}")
+@router.post("/profile/{profile_name}")
 @limiter.limit(WRITE_LIMIT)
 async def set_profile(request: Request, profile_name: str):
     """Set active sensitivity profile"""
