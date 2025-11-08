@@ -295,10 +295,17 @@ async def set_profile(request: Request, profile_name: str):
         # Get current settings
         current_settings = get_protection_settings()
         
+        # Parse watch_paths - handle both string and list
+        watch_paths = current_settings.get("paths", [])
+        if isinstance(watch_paths, str):
+            watch_paths = [watch_paths] if watch_paths else []
+        elif not isinstance(watch_paths, list):
+            watch_paths = []
+        
         # Update threat threshold in settings
         db.update_protection_settings(
-            enabled=current_settings["enabled"],
-            watch_paths=current_settings["paths"] if isinstance(current_settings["paths"], list) else [],
+            enabled=bool(current_settings.get("enabled", False)),
+            watch_paths=watch_paths,
             threat_threshold=threshold
         )
         
