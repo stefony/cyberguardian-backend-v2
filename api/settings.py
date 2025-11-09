@@ -16,6 +16,7 @@ from typing import Optional, Dict, Any
 import json
 import platform
 import psutil
+import sqlite3
 from pathlib import Path
 from datetime import datetime
 from middleware.rate_limiter import limiter, SETTINGS_LIMIT
@@ -24,6 +25,17 @@ router = APIRouter()
 
 # Settings file path
 SETTINGS_FILE = Path("backend/settings.json")
+
+# ============================================
+# DATABASE HELPER
+# ============================================
+
+def get_db_connection():
+    """Get direct database connection"""
+    db_path = Path(__file__).parent.parent / "database" / "cyberguardian.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    return conn
 
 # ============================================
 # PYDANTIC MODELS
@@ -228,8 +240,9 @@ async def reset_settings(request: Request):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to reset settings: {str(e)}")
-    
-    # ============================================
+
+
+# ============================================
 # EXPORT/IMPORT CONFIG
 # ============================================
 
@@ -242,8 +255,6 @@ async def export_config(request: Request):
     Returns a JSON file with all settings, exclusions, schedules, etc.
     """
     try:
-        from database.db import get_db
-        
         # Gather all configuration data
         config = {
             "version": "1.0",
@@ -258,32 +269,24 @@ async def export_config(request: Request):
         app_settings = load_settings()
         config["settings"] = app_settings.model_dump()
         
-        # 2. Protection Settings (if exists)
+        # 2. Exclusions
         try:
-            from api.protection import get_protection_settings
-            protection_settings = get_protection_settings()
-            if protection_settings:
-                config["protection"] = protection_settings
-        except:
-            pass
-        
-        # 3. Exclusions
-        try:
-            db = get_db()
-            cursor = db.cursor()
+            conn = get_db_connection()
+            cursor = conn.cursor()
             cursor.execute("SELECT type, value, reason FROM exclusions")
             exclusions = cursor.fetchall()
             config["exclusions"] = [
                 {"type": row[0], "value": row[1], "reason": row[2]}
                 for row in exclusions
             ]
-        except:
-            pass
+            conn.close()
+        except Exception as e:
+            print(f"Could not load exclusions: {e}")
         
-        # 4. Scan Schedules
+        # 3. Scan Schedules
         try:
-            db = get_db()
-            cursor = db.cursor()
+            conn = get_db_connection()
+            cursor = conn.cursor()
             cursor.execute("""
                 SELECT name, scan_type, target_path, schedule_type, 
                        interval_days, enabled
@@ -301,15 +304,16 @@ async def export_config(request: Request):
                 }
                 for row in schedules
             ]
-        except:
-            pass
+            conn.close()
+        except Exception as e:
+            print(f"Could not load scan schedules: {e}")
         
-        # 5. Auto-Purge Policy
+        # 4. Auto-Purge Policy
         try:
-            from api.quarantine import _auto_purge_settings
-            config["auto_purge_policy"] = _auto_purge_settings.dict()
-        except:
-            pass
+            from api import quarantine
+            config["auto_purge_policy"] = quarantine._auto_purge_settings.dict()
+        except Exception as e:
+            print(f"Could not load auto-purge settings: {e}")
         
         return {
             "success": True,
@@ -337,8 +341,6 @@ async def import_config(request: Request, config: Dict[str, Any]):
         Import status and results
     """
     try:
-        from database.db import get_db
-        
         results = {
             "success": True,
             "imported": [],
@@ -360,20 +362,11 @@ async def import_config(request: Request, config: Dict[str, Any]):
         except Exception as e:
             results["failed"].append(f"App Settings: {str(e)}")
         
-        # 2. Import Protection Settings
-        try:
-            if "protection" in config:
-                from api.protection import update_protection_settings
-                update_protection_settings(config["protection"])
-                results["imported"].append("Protection Settings")
-        except Exception as e:
-            results["failed"].append(f"Protection Settings: {str(e)}")
-        
-        # 3. Import Exclusions
+        # 2. Import Exclusions
         try:
             if "exclusions" in config and config["exclusions"]:
-                db = get_db()
-                cursor = db.cursor()
+                conn = get_db_connection()
+                cursor = conn.cursor()
                 
                 # Clear existing exclusions
                 cursor.execute("DELETE FROM exclusions")
@@ -390,16 +383,17 @@ async def import_config(request: Request, config: Dict[str, Any]):
                         datetime.now().isoformat() + "Z"
                     ))
                 
-                db.commit()
+                conn.commit()
+                conn.close()
                 results["imported"].append(f"Exclusions ({len(config['exclusions'])} items)")
         except Exception as e:
             results["failed"].append(f"Exclusions: {str(e)}")
         
-        # 4. Import Scan Schedules
+        # 3. Import Scan Schedules
         try:
             if "scan_schedules" in config and config["scan_schedules"]:
-                db = get_db()
-                cursor = db.cursor()
+                conn = get_db_connection()
+                cursor = conn.cursor()
                 
                 # Note: Don't delete existing schedules, just add new ones
                 for schedule in config["scan_schedules"]:
@@ -418,17 +412,17 @@ async def import_config(request: Request, config: Dict[str, Any]):
                         datetime.now().isoformat() + "Z"
                     ))
                 
-                db.commit()
+                conn.commit()
+                conn.close()
                 results["imported"].append(f"Scan Schedules ({len(config['scan_schedules'])} items)")
         except Exception as e:
             results["failed"].append(f"Scan Schedules: {str(e)}")
         
-        # 5. Import Auto-Purge Policy
+        # 4. Import Auto-Purge Policy
         try:
             if "auto_purge_policy" in config:
-                from api.quarantine import _auto_purge_settings, AutoPurgeSettings
-                global _auto_purge_settings
-                _auto_purge_settings = AutoPurgeSettings(**config["auto_purge_policy"])
+                from api import quarantine
+                quarantine._auto_purge_settings = quarantine.AutoPurgeSettings(**config["auto_purge_policy"])
                 results["imported"].append("Auto-Purge Policy")
         except Exception as e:
             results["failed"].append(f"Auto-Purge Policy: {str(e)}")
