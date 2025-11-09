@@ -228,3 +228,222 @@ async def reset_settings(request: Request):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to reset settings: {str(e)}")
+    
+    # ============================================
+# EXPORT/IMPORT CONFIG
+# ============================================
+
+@router.get("/settings/export")
+@limiter.limit(SETTINGS_LIMIT)
+async def export_config(request: Request):
+    """
+    Export complete system configuration
+    
+    Returns a JSON file with all settings, exclusions, schedules, etc.
+    """
+    try:
+        from database.db import get_db
+        
+        # Gather all configuration data
+        config = {
+            "version": "1.0",
+            "exported_at": datetime.now().isoformat() + "Z",
+            "settings": {},
+            "exclusions": [],
+            "scan_schedules": [],
+            "auto_purge_policy": {}
+        }
+        
+        # 1. App Settings
+        app_settings = load_settings()
+        config["settings"] = app_settings.model_dump()
+        
+        # 2. Protection Settings (if exists)
+        try:
+            from api.protection import get_protection_settings
+            protection_settings = get_protection_settings()
+            if protection_settings:
+                config["protection"] = protection_settings
+        except:
+            pass
+        
+        # 3. Exclusions
+        try:
+            db = get_db()
+            cursor = db.cursor()
+            cursor.execute("SELECT type, value, reason FROM exclusions")
+            exclusions = cursor.fetchall()
+            config["exclusions"] = [
+                {"type": row[0], "value": row[1], "reason": row[2]}
+                for row in exclusions
+            ]
+        except:
+            pass
+        
+        # 4. Scan Schedules
+        try:
+            db = get_db()
+            cursor = db.cursor()
+            cursor.execute("""
+                SELECT name, scan_type, target_path, schedule_type, 
+                       interval_days, enabled
+                FROM scan_schedules
+            """)
+            schedules = cursor.fetchall()
+            config["scan_schedules"] = [
+                {
+                    "name": row[0],
+                    "scan_type": row[1],
+                    "target_path": row[2],
+                    "schedule_type": row[3],
+                    "interval_days": row[4],
+                    "enabled": bool(row[5])
+                }
+                for row in schedules
+            ]
+        except:
+            pass
+        
+        # 5. Auto-Purge Policy
+        try:
+            from api.quarantine import _auto_purge_settings
+            config["auto_purge_policy"] = _auto_purge_settings.dict()
+        except:
+            pass
+        
+        return {
+            "success": True,
+            "data": config,
+            "filename": f"cyberguardian-config-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to export configuration: {str(e)}"
+        )
+
+
+@router.post("/settings/import")
+@limiter.limit(SETTINGS_LIMIT)
+async def import_config(request: Request, config: Dict[str, Any]):
+    """
+    Import system configuration from JSON
+    
+    Args:
+        config: Complete configuration data
+    
+    Returns:
+        Import status and results
+    """
+    try:
+        from database.db import get_db
+        
+        results = {
+            "success": True,
+            "imported": [],
+            "failed": [],
+            "warnings": []
+        }
+        
+        # Validate config structure
+        if "version" not in config:
+            results["warnings"].append("Config version not specified")
+        
+        # 1. Import App Settings
+        try:
+            if "settings" in config:
+                settings = Settings(**config["settings"])
+                settings.last_updated = datetime.now().isoformat()
+                save_settings(settings)
+                results["imported"].append("App Settings")
+        except Exception as e:
+            results["failed"].append(f"App Settings: {str(e)}")
+        
+        # 2. Import Protection Settings
+        try:
+            if "protection" in config:
+                from api.protection import update_protection_settings
+                update_protection_settings(config["protection"])
+                results["imported"].append("Protection Settings")
+        except Exception as e:
+            results["failed"].append(f"Protection Settings: {str(e)}")
+        
+        # 3. Import Exclusions
+        try:
+            if "exclusions" in config and config["exclusions"]:
+                db = get_db()
+                cursor = db.cursor()
+                
+                # Clear existing exclusions
+                cursor.execute("DELETE FROM exclusions")
+                
+                # Insert new exclusions
+                for excl in config["exclusions"]:
+                    cursor.execute("""
+                        INSERT INTO exclusions (type, value, reason, created_at)
+                        VALUES (?, ?, ?, ?)
+                    """, (
+                        excl["type"],
+                        excl["value"],
+                        excl.get("reason"),
+                        datetime.now().isoformat() + "Z"
+                    ))
+                
+                db.commit()
+                results["imported"].append(f"Exclusions ({len(config['exclusions'])} items)")
+        except Exception as e:
+            results["failed"].append(f"Exclusions: {str(e)}")
+        
+        # 4. Import Scan Schedules
+        try:
+            if "scan_schedules" in config and config["scan_schedules"]:
+                db = get_db()
+                cursor = db.cursor()
+                
+                # Note: Don't delete existing schedules, just add new ones
+                for schedule in config["scan_schedules"]:
+                    cursor.execute("""
+                        INSERT INTO scan_schedules 
+                        (name, scan_type, target_path, schedule_type, 
+                         interval_days, enabled, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        schedule["name"],
+                        schedule["scan_type"],
+                        schedule["target_path"],
+                        schedule["schedule_type"],
+                        schedule.get("interval_days"),
+                        schedule.get("enabled", True),
+                        datetime.now().isoformat() + "Z"
+                    ))
+                
+                db.commit()
+                results["imported"].append(f"Scan Schedules ({len(config['scan_schedules'])} items)")
+        except Exception as e:
+            results["failed"].append(f"Scan Schedules: {str(e)}")
+        
+        # 5. Import Auto-Purge Policy
+        try:
+            if "auto_purge_policy" in config:
+                from api.quarantine import _auto_purge_settings, AutoPurgeSettings
+                global _auto_purge_settings
+                _auto_purge_settings = AutoPurgeSettings(**config["auto_purge_policy"])
+                results["imported"].append("Auto-Purge Policy")
+        except Exception as e:
+            results["failed"].append(f"Auto-Purge Policy: {str(e)}")
+        
+        # Determine overall success
+        if results["failed"]:
+            results["success"] = False
+            results["message"] = f"Imported {len(results['imported'])} items with {len(results['failed'])} failures"
+        else:
+            results["message"] = f"Successfully imported {len(results['imported'])} configuration items"
+        
+        return results
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to import configuration: {str(e)}"
+        )
