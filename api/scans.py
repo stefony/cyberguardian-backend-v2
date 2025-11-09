@@ -267,7 +267,7 @@ async def get_scan_profiles(request: Request):
 
 @router.post("/start-profile/{profile_name}")
 @limiter.limit(WRITE_LIMIT)
-async def start_scan_with_profile(request: Request, profile_name: str):
+async def start_scan_with_profile(request: Request, profile_name: str, bt: BackgroundTasks):
     """Start scan with predefined profile"""
     try:
         if profile_name not in SCAN_PROFILES:
@@ -275,23 +275,23 @@ async def start_scan_with_profile(request: Request, profile_name: str):
         
         profile = SCAN_PROFILES[profile_name]
         
-        # Create scan with profile settings
-        scan_id = db.create_scan(
+        # Create scan history entry
+        started_at = datetime.utcnow().isoformat() + "Z"
+        
+        history_id = add_scan_history(
+            schedule_id=None,
             scan_type=profile["scan_type"],
-            target_path="C:\\",  # Default - can be customized
-            options={
-                "threads": profile["threads"],
-                "max_files": profile["max_files"],
-                "extensions": profile["extensions"],
-                "skip_archives": profile["skip_archives"],
-                "recursive": profile["recursive"],
-                "profile": profile_name
-            }
+            target_path="C:\\",
+            started_at=started_at,
+            status="running"
         )
+        
+        # Run scan in background
+        bt.add_task(_execute_scan, history_id, profile["scan_type"], "C:\\")
         
         return {
             "success": True,
-            "scan_id": scan_id,
+            "scan_id": history_id,
             "profile": profile_name,
             "message": f"Started {profile['name']}"
         }
