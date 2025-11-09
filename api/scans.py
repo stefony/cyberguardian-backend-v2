@@ -18,6 +18,7 @@ from database.db import (
     get_scan_history
 )
 from middleware.rate_limiter import limiter, READ_LIMIT, WRITE_LIMIT
+from database import db
 
 router = APIRouter(prefix="/api/scans", tags=["scans"])
 
@@ -207,6 +208,97 @@ async def run_manual_scan(request: Request, req: ManualScanRequest, bt: Backgrou
         "history_id": history_id
     }
 
+# ============================================
+# SCAN PROFILES
+# ============================================
+
+SCAN_PROFILES = {
+    "quick": {
+        "name": "Quick Scan",
+        "description": "Fast scan of critical system files",
+        "scan_type": "quick",
+        "threads": 2,
+        "max_files": 100,
+        "extensions": [".exe", ".dll", ".bat", ".ps1", ".cmd", ".vbs"],
+        "skip_archives": True,
+        "recursive": False,
+        "duration_estimate": "~2 minutes",
+        "icon": "zap",
+        "color": "blue"
+    },
+    "standard": {
+        "name": "Standard Scan",
+        "description": "Balanced scan for regular use",
+        "scan_type": "standard",
+        "threads": 4,
+        "max_files": 1000,
+        "extensions": [".exe", ".dll", ".bat", ".ps1", ".cmd", ".vbs", ".js", ".jar", ".zip", ".rar"],
+        "skip_archives": False,
+        "recursive": True,
+        "duration_estimate": "~10 minutes",
+        "icon": "shield",
+        "color": "purple"
+    },
+    "deep": {
+        "name": "Deep Scan",
+        "description": "Comprehensive scan of entire system",
+        "scan_type": "deep",
+        "threads": 8,
+        "max_files": 10000,
+        "extensions": ["*"],
+        "skip_archives": False,
+        "recursive": True,
+        "duration_estimate": "~30+ minutes",
+        "icon": "search",
+        "color": "red"
+    }
+}
+
+
+@router.get("/api/scans/profiles")
+@limiter.limit(READ_LIMIT)
+async def get_scan_profiles(request: Request):
+    """Get available scan profiles"""
+    return {
+        "success": True,
+        "profiles": SCAN_PROFILES
+    }
+
+
+@router.post("/api/scans/start-profile/{profile_name}")
+@limiter.limit(WRITE_LIMIT)
+async def start_scan_with_profile(request: Request, profile_name: str):
+    """Start scan with predefined profile"""
+    try:
+        if profile_name not in SCAN_PROFILES:
+            raise HTTPException(status_code=400, detail="Invalid profile name")
+        
+        profile = SCAN_PROFILES[profile_name]
+        
+        # Create scan with profile settings
+        scan_id = db.create_scan(
+            scan_type=profile["scan_type"],
+            target_path="C:\\",  # Default - can be customized
+            options={
+                "threads": profile["threads"],
+                "max_files": profile["max_files"],
+                "extensions": profile["extensions"],
+                "skip_archives": profile["skip_archives"],
+                "recursive": profile["recursive"],
+                "profile": profile_name
+            }
+        )
+        
+        return {
+            "success": True,
+            "scan_id": scan_id,
+            "profile": profile_name,
+            "message": f"Started {profile['name']}"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ============================================
 # BACKGROUND SCAN EXECUTOR
