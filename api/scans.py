@@ -255,7 +255,7 @@ SCAN_PROFILES = {
 }
 
 
-@router.get("/api/scans/profiles")
+@router.get("/profiles")
 @limiter.limit(READ_LIMIT)
 async def get_scan_profiles(request: Request):
     """Get available scan profiles"""
@@ -265,7 +265,7 @@ async def get_scan_profiles(request: Request):
     }
 
 
-@router.post("/api/scans/start-profile/{profile_name}")
+@router.post("/start-profile/{profile_name}")
 @limiter.limit(WRITE_LIMIT)
 async def start_scan_with_profile(request: Request, profile_name: str):
     """Start scan with predefined profile"""
