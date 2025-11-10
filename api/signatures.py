@@ -1,6 +1,6 @@
 """
 CyberGuardian AI - Signature-based Detection API
-YARA signature scanning endpoints + Heuristic analysis
+YARA signature scanning endpoints + Heuristic analysis + Multi-Engine Detection
 """
 
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File
@@ -28,6 +28,14 @@ except ImportError as e:
     HEURISTIC_AVAILABLE = False
     logging.warning(f"Heuristic engine not available: {e}")
 
+# Import Multi-Engine Detector
+try:
+    from core.detection_engine import MultiEngineDetector
+    MULTI_ENGINE_AVAILABLE = True
+except ImportError as e:
+    MULTI_ENGINE_AVAILABLE = False
+    logging.warning(f"Multi-Engine detector not available: {e}")
+
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
@@ -49,6 +57,15 @@ if HEURISTIC_AVAILABLE:
         logger.info("✅ Heuristic engine initialized successfully")
     except Exception as e:
         logger.error(f"Failed to initialize Heuristic engine: {e}")
+
+# Initialize Multi-Engine Detector (singleton)
+multi_engine = None
+if MULTI_ENGINE_AVAILABLE:
+    try:
+        multi_engine = MultiEngineDetector()
+        logger.info("✅ Multi-Engine detector initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize Multi-Engine detector: {e}")
 
 # ============================================
 # MODELS
@@ -315,4 +332,101 @@ async def get_heuristic_stats(request: Request):
         raise HTTPException(status_code=503, detail="Heuristic engine not available")
     
     stats = heuristic_engine.get_statistics()
+    return stats
+
+
+# ============================================
+# MULTI-ENGINE DETECTION ENDPOINTS
+# ============================================
+
+@router.post("/detect")
+@limiter.limit(WRITE_LIMIT)
+async def multi_engine_detect(request: Request, body: ScanFileRequest):
+    """
+    Perform comprehensive multi-engine detection (YARA + Heuristics + ML)
+    """
+    if not MULTI_ENGINE_AVAILABLE or not multi_engine:
+        raise HTTPException(status_code=503, detail="Multi-engine detector not available")
+    
+    if not os.path.exists(body.file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    try:
+        result = multi_engine.scan_file(body.file_path)
+        
+        return {
+            "file_path": result.file_path,
+            "file_size": result.file_size,
+            "is_malware": result.is_malware,
+            "confidence_score": result.confidence_score,
+            "threat_level": result.threat_level,
+            "yara_detected": result.yara_detected,
+            "yara_matches": result.yara_matches,
+            "heuristic_detected": result.heuristic_detected,
+            "heuristic_indicators": result.heuristic_indicators[:5],  # Limit to 5
+            "ml_detected": result.ml_detected,
+            "detection_methods": result.detection_methods,
+            "threat_indicators": result.threat_indicators[:10],  # Limit to 10
+            "recommendation": result.recommendation,
+            "timestamp": result.timestamp
+        }
+    
+    except Exception as e:
+        logger.error(f"Multi-engine detection failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Detection failed: {str(e)}")
+
+
+@router.post("/detect/upload")
+@limiter.limit(WRITE_LIMIT)
+async def multi_engine_detect_upload(request: Request, file: UploadFile = File(...)):
+    """
+    Perform comprehensive multi-engine detection on uploaded file
+    """
+    if not MULTI_ENGINE_AVAILABLE or not multi_engine:
+        raise HTTPException(status_code=503, detail="Multi-engine detector not available")
+    
+    try:
+        # Save to temp
+        with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+            content = await file.read()
+            temp_file.write(content)
+            temp_path = temp_file.name
+        
+        try:
+            result = multi_engine.scan_file(temp_path)
+            
+            return {
+                "filename": file.filename,
+                "file_size": result.file_size,
+                "is_malware": result.is_malware,
+                "confidence_score": result.confidence_score,
+                "threat_level": result.threat_level,
+                "yara_detected": result.yara_detected,
+                "yara_matches": result.yara_matches,
+                "heuristic_detected": result.heuristic_detected,
+                "heuristic_indicators": result.heuristic_indicators[:5],
+                "ml_detected": result.ml_detected,
+                "detection_methods": result.detection_methods,
+                "threat_indicators": result.threat_indicators[:10],
+                "recommendation": result.recommendation,
+                "timestamp": result.timestamp
+            }
+        finally:
+            os.unlink(temp_path)
+    
+    except Exception as e:
+        logger.error(f"Multi-engine upload detection failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Detection failed: {str(e)}")
+
+
+@router.get("/detect/stats")
+@limiter.limit(READ_LIMIT)
+async def get_multi_engine_stats(request: Request):
+    """
+    Get multi-engine detector statistics
+    """
+    if not MULTI_ENGINE_AVAILABLE or not multi_engine:
+        raise HTTPException(status_code=503, detail="Multi-engine detector not available")
+    
+    stats = multi_engine.get_statistics()
     return stats
