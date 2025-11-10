@@ -27,6 +27,7 @@ from api.quarantine import router as quarantine_router
 from api.exclusions import router as exclusions_router
 from api.signatures import router as signatures_router  
 from api.threat_intel import router as threat_intel_router
+from api import mitre
 
 # ============================================
 # Logging (set up BEFORE app creation)
@@ -140,6 +141,7 @@ app.include_router(quarantine_router)
 app.include_router(exclusions_router, tags=["Exclusions"])
 app.include_router(signatures_router, prefix="/api/signatures", tags=["Signatures"])  # ← NEW
 app.include_router(threat_intel_router, prefix="/api/threat-intel", tags=["Threat Intelligence"])
+app.include_router(mitre.router, prefix="/api/mitre", tags=["MITRE ATT&CK"])
 
 
 # ============================================

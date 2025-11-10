@@ -213,6 +213,75 @@ def init_database():
             updated_at TEXT NOT NULL
         )
     """)
+    # ============================================
+    # MITRE ATT&CK TABLES
+    # ============================================
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS mitre_tactics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tactic_id TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            description TEXT,
+            url TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS mitre_techniques (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            technique_id TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            description TEXT,
+            url TEXT,
+            tactic_id INTEGER NOT NULL,
+            parent_technique_id INTEGER,
+            is_sub_technique INTEGER DEFAULT 0,
+            platforms TEXT,
+            data_sources TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (tactic_id) REFERENCES mitre_tactics(id),
+            FOREIGN KEY (parent_technique_id) REFERENCES mitre_techniques(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS threat_mitre_mappings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            threat_id INTEGER NOT NULL,
+            threat_type TEXT,
+            threat_name TEXT,
+            technique_id INTEGER NOT NULL,
+            tactic_id INTEGER NOT NULL,
+            confidence INTEGER DEFAULT 50,
+            mapping_source TEXT,
+            description TEXT,
+            evidence TEXT,
+            detected_at TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (technique_id) REFERENCES mitre_techniques(id),
+            FOREIGN KEY (tactic_id) REFERENCES mitre_tactics(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS mitre_detection_coverage (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            technique_id INTEGER NOT NULL UNIQUE,
+            can_detect INTEGER DEFAULT 0,
+            detection_methods TEXT,
+            coverage_level TEXT DEFAULT 'none',
+            times_detected INTEGER DEFAULT 0,
+            last_detected TEXT,
+            notes TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (technique_id) REFERENCES mitre_techniques(id)
+        )
+    """)
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS threat_feeds (
@@ -2121,5 +2190,258 @@ def get_ioc_statistics() -> Dict[str, Any]:
         "last_updated": datetime.now().isoformat()
     }
 
+# ============================================
+# MITRE ATT&CK FUNCTIONS
+# ============================================
+
+def add_mitre_tactic(
+    tactic_id: str,
+    name: str,
+    description: Optional[str] = None,
+    url: Optional[str] = None
+) -> int:
+    """Add MITRE tactic"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    now = datetime.now().isoformat()
+    
+    try:
+        cursor.execute("""
+            INSERT INTO mitre_tactics (tactic_id, name, description, url, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (tactic_id, name, description, url, now, now))
+        
+        tactic_db_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        return tactic_db_id
+    
+    except sqlite3.IntegrityError:
+        conn.close()
+        return -1
+
+
+def get_mitre_tactics() -> List[Dict[str, Any]]:
+    """Get all MITRE tactics"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM mitre_tactics ORDER BY tactic_id")
+    rows = cursor.fetchall()
+    conn.close()
+    
+    return [dict(row) for row in rows]
+
+
+def add_mitre_technique(
+    technique_id: str,
+    name: str,
+    tactic_id: str,
+    description: Optional[str] = None,
+    url: Optional[str] = None,
+    platforms: Optional[List[str]] = None
+) -> int:
+    """Add MITRE technique"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    now = datetime.now().isoformat()
+    
+    # Get tactic DB ID
+    cursor.execute("SELECT id FROM mitre_tactics WHERE tactic_id = ?", (tactic_id,))
+    tactic_row = cursor.fetchone()
+    
+    if not tactic_row:
+        conn.close()
+        raise ValueError(f"Tactic {tactic_id} not found")
+    
+    tactic_db_id = tactic_row["id"]
+    platforms_json = json.dumps(platforms) if platforms else None
+    
+    try:
+        cursor.execute("""
+            INSERT INTO mitre_techniques 
+            (technique_id, name, description, url, tactic_id, platforms, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (technique_id, name, description, url, tactic_db_id, platforms_json, now, now))
+        
+        technique_db_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        return technique_db_id
+    
+    except sqlite3.IntegrityError:
+        conn.close()
+        return -1
+
+
+def get_mitre_techniques(tactic_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Get MITRE techniques, optionally filtered by tactic"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    if tactic_id:
+        cursor.execute("""
+            SELECT t.* FROM mitre_techniques t
+            JOIN mitre_tactics tac ON t.tactic_id = tac.id
+            WHERE tac.tactic_id = ?
+            ORDER BY t.technique_id
+        """, (tactic_id,))
+    else:
+        cursor.execute("SELECT * FROM mitre_techniques ORDER BY technique_id")
+    
+    rows = cursor.fetchall()
+    conn.close()
+    
+    techniques = []
+    for row in rows:
+        tech = dict(row)
+        if tech.get("platforms"):
+            tech["platforms"] = json.loads(tech["platforms"])
+        techniques.append(tech)
+    
+    return techniques
+
+
+def add_threat_mitre_mapping(
+    threat_id: int,
+    threat_type: str,
+    threat_name: str,
+    technique_id: str,
+    tactic_id: str,
+    confidence: int = 50,
+    mapping_source: str = "automatic",
+    description: Optional[str] = None,
+    evidence: Optional[Dict[str, Any]] = None
+) -> int:
+    """Add threat to MITRE technique mapping"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    now = datetime.now().isoformat()
+    
+    # Get technique and tactic DB IDs
+    cursor.execute("SELECT id FROM mitre_techniques WHERE technique_id = ?", (technique_id,))
+    tech_row = cursor.fetchone()
+    
+    cursor.execute("SELECT id FROM mitre_tactics WHERE tactic_id = ?", (tactic_id,))
+    tac_row = cursor.fetchone()
+    
+    if not tech_row or not tac_row:
+        conn.close()
+        raise ValueError(f"Technique {technique_id} or Tactic {tactic_id} not found")
+    
+    tech_db_id = tech_row["id"]
+    tac_db_id = tac_row["id"]
+    evidence_json = json.dumps(evidence) if evidence else None
+    
+    cursor.execute("""
+        INSERT INTO threat_mitre_mappings 
+        (threat_id, threat_type, threat_name, technique_id, tactic_id,
+         confidence, mapping_source, description, evidence, detected_at, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (threat_id, threat_type, threat_name, tech_db_id, tac_db_id,
+          confidence, mapping_source, description, evidence_json, now, now))
+    
+    mapping_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    
+    return mapping_id
+
+
+def get_threat_mitre_mappings(threat_id: Optional[int] = None, limit: int = 100) -> List[Dict[str, Any]]:
+    """Get threat-to-MITRE mappings"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    if threat_id:
+        cursor.execute("""
+            SELECT 
+                tm.*,
+                tac.tactic_id as tactic_mitre_id,
+                tac.name as tactic_name,
+                tech.technique_id as technique_mitre_id,
+                tech.name as technique_name
+            FROM threat_mitre_mappings tm
+            JOIN mitre_tactics tac ON tm.tactic_id = tac.id
+            JOIN mitre_techniques tech ON tm.technique_id = tech.id
+            WHERE tm.threat_id = ?
+            ORDER BY tm.detected_at DESC
+        """, (threat_id,))
+    else:
+        cursor.execute("""
+            SELECT 
+                tm.*,
+                tac.tactic_id as tactic_mitre_id,
+                tac.name as tactic_name,
+                tech.technique_id as technique_mitre_id,
+                tech.name as technique_name
+            FROM threat_mitre_mappings tm
+            JOIN mitre_tactics tac ON tm.tactic_id = tac.id
+            JOIN mitre_techniques tech ON tm.technique_id = tech.id
+            ORDER BY tm.detected_at DESC
+            LIMIT ?
+        """, (limit,))
+    
+    rows = cursor.fetchall()
+    conn.close()
+    
+    mappings = []
+    for row in rows:
+        mapping = dict(row)
+        if mapping.get("evidence"):
+            mapping["evidence"] = json.loads(mapping["evidence"])
+        mappings.append(mapping)
+    
+    return mappings
+
+
+def get_mitre_statistics() -> Dict[str, Any]:
+    """Get MITRE ATT&CK statistics"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    # Total tactics and techniques
+    cursor.execute("SELECT COUNT(*) as count FROM mitre_tactics")
+    total_tactics = cursor.fetchone()["count"]
+    
+    cursor.execute("SELECT COUNT(*) as count FROM mitre_techniques")
+    total_techniques = cursor.fetchone()["count"]
+    
+    # Total mappings
+    cursor.execute("SELECT COUNT(*) as count FROM threat_mitre_mappings")
+    total_mappings = cursor.fetchone()["count"]
+    
+    # Most mapped techniques
+    cursor.execute("""
+        SELECT 
+            tech.technique_id,
+            tech.name,
+            COUNT(tm.id) as mapping_count
+        FROM mitre_techniques tech
+        LEFT JOIN threat_mitre_mappings tm ON tm.technique_id = tech.id
+        GROUP BY tech.id
+        HAVING mapping_count > 0
+        ORDER BY mapping_count DESC
+        LIMIT 10
+    """)
+    top_techniques_rows = cursor.fetchall()
+    
+    top_techniques = [
+        {"technique_id": row["technique_id"], "name": row["name"], "count": row["mapping_count"]}
+        for row in top_techniques_rows
+    ]
+    
+    conn.close()
+    
+    return {
+        "total_tactics": total_tactics,
+        "total_techniques": total_techniques,
+        "total_mappings": total_mappings,
+        "top_mapped_techniques": top_techniques,
+        "last_updated": datetime.now().isoformat()
+    }
 # Initialize database on module import
 init_database()
