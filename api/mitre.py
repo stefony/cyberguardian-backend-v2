@@ -230,3 +230,32 @@ async def get_coverage(request: Request):
     except Exception as e:
         logger.error(f"Error getting coverage: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/seed")
+@limiter.limit(WRITE_LIMIT)
+async def seed_mitre_data_endpoint(request: Request):
+    """
+    Seed MITRE ATT&CK data (ADMIN ONLY - remove after first use)
+    
+    ⚠️ WARNING: This endpoint should be removed after seeding production!
+    """
+    try:
+        from database.seed_mitre import seed_mitre_data
+        
+        # Run seeding
+        seed_mitre_data()
+        
+        # Get stats
+        stats = db.get_mitre_statistics()
+        
+        return {
+            "success": True,
+            "message": "MITRE ATT&CK data seeded successfully",
+            "statistics": stats
+        }
+    
+    except Exception as e:
+        logger.error(f"Error seeding MITRE data: {e}")
+        raise HTTPException(status_code=500, detail=str(e))    
+    
+    
