@@ -15,7 +15,7 @@ from api.analytics import router as analytics_router
 from api.settings import router as settings_router
 from api.emails import router as emails_router
 from api.honeypots import router as honeypots_router
-from api.protection import router as protection_router  # ← NEW
+from api.protection import router as protection_router
 from api.ml import router as ml_router
 from api import threats, detection, deception, honeypots, ml, ai_insights, analytics, emails, settings, health
 from api.auth import router as auth_router
@@ -25,6 +25,7 @@ from api.google_oauth import router as google_oauth_router
 from api.scans import router as scans_router
 from api.quarantine import router as quarantine_router
 from api.exclusions import router as exclusions_router
+from api.signatures import router as signatures_router  # ← NEW
 
 
 # ============================================
@@ -132,12 +133,12 @@ app.include_router(settings_router, prefix="/api", tags=["Settings"])
 app.include_router(honeypots_router, prefix="/api/honeypots", tags=["Honeypots"])
 app.include_router(protection_router)
 app.include_router(ml_router, prefix="/api", tags=["Machine Learning"])
-app.include_router(websocket_router, tags=["WebSocket"])  # No prefix for WebSocket
+app.include_router(websocket_router, tags=["WebSocket"])
 app.include_router(google_oauth_router, prefix="/api", tags=["Auth"])
 app.include_router(scans_router)
 app.include_router(quarantine_router)
 app.include_router(exclusions_router, tags=["Exclusions"])
-
+app.include_router(signatures_router, prefix="/api/signatures", tags=["Signatures"])  # ← NEW
 
 
 # ============================================
@@ -161,6 +162,7 @@ async def root():
         "emails": "/api/emails",
         "honeypots": "/api/honeypots",
         "ml": "/api/ml",
+        "signatures": "/api/signatures",  # ← NEW
         "ws": "/ws"
     }
 
