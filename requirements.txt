@@ -91,4 +91,7 @@ google-auth==2.35.0
 google-auth-oauthlib==1.2.1
 watchdog==3.0.0
 apscheduler==3.10.4
+pefile==2024.8.26
+pyelftools==0.32
+
 

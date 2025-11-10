@@ -1,6 +1,6 @@
 """
 CyberGuardian AI - Signature-based Detection API
-YARA signature scanning endpoints
+YARA signature scanning endpoints + Heuristic analysis
 """
 
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File
@@ -20,6 +20,14 @@ except ImportError as e:
     YARA_AVAILABLE = False
     logging.warning(f"YARA engine not available: {e}")
 
+# Import Heuristic engine
+try:
+    from core.heuristics import HeuristicEngine, HeuristicResult
+    HEURISTIC_AVAILABLE = True
+except ImportError as e:
+    HEURISTIC_AVAILABLE = False
+    logging.warning(f"Heuristic engine not available: {e}")
+
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
@@ -32,6 +40,15 @@ if YARA_AVAILABLE:
         logger.info("✅ YARA engine initialized successfully")
     except Exception as e:
         logger.error(f"Failed to initialize YARA engine: {e}")
+
+# Initialize Heuristic engine (singleton)
+heuristic_engine = None
+if HEURISTIC_AVAILABLE:
+    try:
+        heuristic_engine = HeuristicEngine()
+        logger.info("✅ Heuristic engine initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize Heuristic engine: {e}")
 
 # ============================================
 # MODELS
@@ -53,7 +70,7 @@ class YaraStatsResponse(BaseModel):
     engine_ready: bool
 
 # ============================================
-# ENDPOINTS
+# YARA ENDPOINTS
 # ============================================
 
 @router.get("/status")
@@ -212,3 +229,90 @@ async def reload_yara_rules(request: Request):
     except Exception as e:
         logger.error(f"Rule reload failed: {e}")
         raise HTTPException(status_code=500, detail=f"Reload failed: {str(e)}")
+
+
+# ============================================
+# HEURISTIC ANALYSIS ENDPOINTS
+# ============================================
+
+@router.post("/heuristic/analyze")
+@limiter.limit(WRITE_LIMIT)
+async def heuristic_analyze_file(request: Request, body: ScanFileRequest):
+    """
+    Perform heuristic analysis on a file (PE/ELF)
+    """
+    if not HEURISTIC_AVAILABLE or not heuristic_engine:
+        raise HTTPException(status_code=503, detail="Heuristic engine not available")
+    
+    if not os.path.exists(body.file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    try:
+        result = heuristic_engine.analyze_file(body.file_path)
+        
+        return {
+            "file_path": result.file_path,
+            "file_type": result.file_type,
+            "file_size": result.file_size,
+            "threat_score": result.threat_score,
+            "threat_level": result.threat_level,
+            "is_packed": result.is_packed,
+            "entropy": result.entropy,
+            "indicators": result.indicators,
+            "timestamp": result.timestamp
+        }
+    
+    except Exception as e:
+        logger.error(f"Heuristic analysis failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
+
+
+@router.post("/heuristic/upload")
+@limiter.limit(WRITE_LIMIT)
+async def heuristic_analyze_upload(request: Request, file: UploadFile = File(...)):
+    """
+    Perform heuristic analysis on uploaded file
+    """
+    if not HEURISTIC_AVAILABLE or not heuristic_engine:
+        raise HTTPException(status_code=503, detail="Heuristic engine not available")
+    
+    try:
+        # Save to temp
+        with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+            content = await file.read()
+            temp_file.write(content)
+            temp_path = temp_file.name
+        
+        try:
+            result = heuristic_engine.analyze_file(temp_path)
+            
+            return {
+                "filename": file.filename,
+                "file_type": result.file_type,
+                "file_size": result.file_size,
+                "threat_score": result.threat_score,
+                "threat_level": result.threat_level,
+                "is_packed": result.is_packed,
+                "entropy": result.entropy,
+                "indicators": result.indicators,
+                "timestamp": result.timestamp
+            }
+        finally:
+            os.unlink(temp_path)
+    
+    except Exception as e:
+        logger.error(f"Heuristic upload analysis failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
+
+
+@router.get("/heuristic/stats")
+@limiter.limit(READ_LIMIT)
+async def get_heuristic_stats(request: Request):
+    """
+    Get heuristic engine statistics
+    """
+    if not HEURISTIC_AVAILABLE or not heuristic_engine:
+        raise HTTPException(status_code=503, detail="Heuristic engine not available")
+    
+    stats = heuristic_engine.get_statistics()
+    return stats
