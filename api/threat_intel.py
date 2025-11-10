@@ -218,3 +218,74 @@ async def get_high_severity_iocs(request: Request, limit: int = 50):
     except Exception as e:
         logger.error(f"Error getting high severity IOCs: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    
+    # ============================================
+# THREAT FEED MANAGEMENT ENDPOINTS
+# ============================================
+
+@router.post("/feeds/update")
+@limiter.limit(WRITE_LIMIT)
+async def update_threat_feeds(request: Request, limit: int = 50):
+    """
+    Manually trigger threat feed update
+    """
+    try:
+        from core.threat_feeds.feed_manager import ThreatFeedManager
+        
+        manager = ThreatFeedManager()
+        results = manager.update_all_feeds(limit_per_feed=limit)
+        
+        return {
+            "success": True,
+            "message": "Threat feeds updated",
+            "results": results
+        }
+    
+    except Exception as e:
+        logger.error(f"Error updating feeds: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/feeds/status")
+@limiter.limit(READ_LIMIT)
+async def get_feeds_status(request: Request):
+    """
+    Get threat feeds status
+    """
+    try:
+        from core.threat_feeds.feed_manager import ThreatFeedManager
+        
+        manager = ThreatFeedManager()
+        stats = manager.get_statistics()
+        
+        return {
+            "success": True,
+            "feeds": stats
+        }
+    
+    except Exception as e:
+        logger.error(f"Error getting feed status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/feeds/check-live")
+@limiter.limit(WRITE_LIMIT)
+async def check_live_feeds(request: Request, body: IOCCheckRequest):
+    """
+    Check value against live threat feeds (not just database)
+    """
+    try:
+        from core.threat_feeds.feed_manager import ThreatFeedManager
+        
+        manager = ThreatFeedManager()
+        result = manager.check_value(body.value, check_feeds=True)
+        
+        return {
+            "success": True,
+            "checked_value": body.value,
+            "result": result
+        }
+    
+    except Exception as e:
+        logger.error(f"Error checking live feeds: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
