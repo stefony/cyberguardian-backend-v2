@@ -25,8 +25,8 @@ from api.google_oauth import router as google_oauth_router
 from api.scans import router as scans_router
 from api.quarantine import router as quarantine_router
 from api.exclusions import router as exclusions_router
-from api.signatures import router as signatures_router  # ← NEW
-
+from api.signatures import router as signatures_router  
+from api.threat_intel import router as threat_intel_router
 
 # ============================================
 # Logging (set up BEFORE app creation)
@@ -139,6 +139,7 @@ app.include_router(scans_router)
 app.include_router(quarantine_router)
 app.include_router(exclusions_router, tags=["Exclusions"])
 app.include_router(signatures_router, prefix="/api/signatures", tags=["Signatures"])  # ← NEW
+app.include_router(threat_intel_router, prefix="/api/threat-intel", tags=["Threat Intelligence"])
 
 
 # ============================================
@@ -162,7 +163,8 @@ async def root():
         "emails": "/api/emails",
         "honeypots": "/api/honeypots",
         "ml": "/api/ml",
-        "signatures": "/api/signatures",  # ← NEW
+        "signatures": "/api/signatures", 
+        "threat_intel": "/api/threat-intel",# ← NEW
         "ws": "/ws"
     }
 

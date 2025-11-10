@@ -173,6 +173,7 @@ def init_database():
         updated_at TEXT NOT NULL,
         CHECK (id = 1)
     )  
+        
     """) 
     
     cursor.execute("""
@@ -187,7 +188,67 @@ def init_database():
     )
 """)
 
+    # IOC (Indicators of Compromise) tables
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS iocs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ioc_type TEXT NOT NULL,
+            ioc_value TEXT NOT NULL UNIQUE,
+            threat_type TEXT,
+            threat_name TEXT,
+            severity TEXT DEFAULT 'medium',
+            confidence REAL DEFAULT 50.0,
+            source TEXT,
+            source_url TEXT,
+            mitre_tactics TEXT,
+            mitre_techniques TEXT,
+            description TEXT,
+            tags TEXT,
+            first_seen TEXT NOT NULL,
+            last_seen TEXT NOT NULL,
+            times_seen INTEGER DEFAULT 1,
+            is_active INTEGER DEFAULT 1,
+            is_whitelisted INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS threat_feeds (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            feed_type TEXT NOT NULL,
+            url TEXT,
+            api_key TEXT,
+            enabled INTEGER DEFAULT 1,
+            refresh_interval INTEGER DEFAULT 3600,
+            last_refresh TEXT,
+            total_iocs INTEGER DEFAULT 0,
+            successful_updates INTEGER DEFAULT 0,
+            failed_updates INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS threat_matches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ioc_id INTEGER NOT NULL,
+            matched_value TEXT NOT NULL,
+            match_type TEXT,
+            detection_source TEXT,
+            file_path TEXT,
+            process_name TEXT,
+            threat_level TEXT,
+            confidence_score REAL,
+            action_taken TEXT,
+            matched_at TEXT NOT NULL,
+            FOREIGN KEY (ioc_id) REFERENCES iocs(id)
+        )
+    """)
+          
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS scan_schedules (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -350,7 +411,6 @@ def init_database():
     conn.close()
     
     print(f"✅ Database initialized at {DB_PATH}")
-
 
 # ========== THREATS FUNCTIONS ==========
 
@@ -1818,6 +1878,248 @@ def is_excluded(exclusion_type: str, value: str) -> bool:
     conn.close()
     
     return result["count"] > 0
+
+# ========== IOC FUNCTIONS ==========
+
+def add_ioc(
+    ioc_value: str,
+    ioc_type: str,
+    threat_type: Optional[str] = None,
+    threat_name: Optional[str] = None,
+    severity: str = "medium",
+    confidence: float = 50.0,
+    source: str = "manual",
+    description: Optional[str] = None,
+    mitre_tactics: Optional[List[str]] = None,
+    mitre_techniques: Optional[List[str]] = None,
+    tags: Optional[List[str]] = None
+) -> int:
+    """Add or update IOC"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    now = datetime.now().isoformat()
+    
+    # Check if exists
+    cursor.execute("SELECT id, times_seen FROM iocs WHERE ioc_value = ?", (ioc_value,))
+    existing = cursor.fetchone()
+    
+    if existing:
+        # Update existing
+        cursor.execute("""
+            UPDATE iocs 
+            SET times_seen = times_seen + 1, 
+                last_seen = ?,
+                confidence = MAX(confidence, ?),
+                updated_at = ?
+            WHERE id = ?
+        """, (now, confidence, now, existing["id"]))
+        
+        ioc_id = existing["id"]
+    else:
+        # Create new
+        mitre_tactics_json = json.dumps(mitre_tactics) if mitre_tactics else None
+        mitre_techniques_json = json.dumps(mitre_techniques) if mitre_techniques else None
+        tags_json = json.dumps(tags) if tags else None
+        
+        cursor.execute("""
+            INSERT INTO iocs 
+            (ioc_type, ioc_value, threat_type, threat_name, severity, confidence,
+             source, description, mitre_tactics, mitre_techniques, tags,
+             first_seen, last_seen, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (ioc_type, ioc_value, threat_type, threat_name, severity, confidence,
+              source, description, mitre_tactics_json, mitre_techniques_json, tags_json,
+              now, now, now, now))
+        
+        ioc_id = cursor.lastrowid
+    
+    conn.commit()
+    conn.close()
+    
+    return ioc_id
+
+
+def get_ioc(ioc_value: str) -> Optional[Dict[str, Any]]:
+    """Get IOC by value"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT * FROM iocs 
+        WHERE ioc_value = ? AND is_active = 1 AND is_whitelisted = 0
+    """, (ioc_value,))
+    
+    row = cursor.fetchone()
+    conn.close()
+    
+    if not row:
+        return None
+    
+    ioc = dict(row)
+    if ioc.get("mitre_tactics"):
+        ioc["mitre_tactics"] = json.loads(ioc["mitre_tactics"])
+    if ioc.get("mitre_techniques"):
+        ioc["mitre_techniques"] = json.loads(ioc["mitre_techniques"])
+    if ioc.get("tags"):
+        ioc["tags"] = json.loads(ioc["tags"])
+    
+    return ioc
+
+
+def get_iocs(
+    ioc_type: Optional[str] = None,
+    severity: Optional[str] = None,
+    source: Optional[str] = None,
+    limit: int = 100
+) -> List[Dict[str, Any]]:
+    """Get IOCs with filters"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    query = "SELECT * FROM iocs WHERE is_active = 1"
+    params = []
+    
+    if ioc_type:
+        query += " AND ioc_type = ?"
+        params.append(ioc_type)
+    
+    if severity:
+        query += " AND severity = ?"
+        params.append(severity)
+    
+    if source:
+        query += " AND source = ?"
+        params.append(source)
+    
+    query += " ORDER BY created_at DESC LIMIT ?"
+    params.append(limit)
+    
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    
+    iocs = []
+    for row in rows:
+        ioc = dict(row)
+        if ioc.get("mitre_tactics"):
+            ioc["mitre_tactics"] = json.loads(ioc["mitre_tactics"])
+        if ioc.get("mitre_techniques"):
+            ioc["mitre_techniques"] = json.loads(ioc["mitre_techniques"])
+        if ioc.get("tags"):
+            ioc["tags"] = json.loads(ioc["tags"])
+        iocs.append(ioc)
+    
+    return iocs
+
+
+def check_ioc(value: str) -> Dict[str, Any]:
+    """Check if value matches any IOC"""
+    ioc = get_ioc(value)
+    
+    if ioc:
+        return {
+            "is_threat": True,
+            "ioc_id": ioc["id"],
+            "ioc_type": ioc["ioc_type"],
+            "threat_type": ioc["threat_type"],
+            "threat_name": ioc["threat_name"],
+            "severity": ioc["severity"],
+            "confidence": ioc["confidence"],
+            "source": ioc["source"],
+            "description": ioc["description"],
+            "first_seen": ioc["first_seen"],
+            "times_seen": ioc["times_seen"]
+        }
+    
+    return {
+        "is_threat": False,
+        "message": "No threat intelligence match"
+    }
+
+
+def record_threat_match(
+    ioc_id: int,
+    matched_value: str,
+    detection_source: str,
+    file_path: Optional[str] = None,
+    threat_level: str = "medium",
+    confidence_score: float = 50.0,
+    action_taken: str = "alerted"
+) -> int:
+    """Record IOC match"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    now = datetime.now().isoformat()
+    
+    cursor.execute("""
+        INSERT INTO threat_matches 
+        (ioc_id, matched_value, match_type, detection_source, file_path,
+         threat_level, confidence_score, action_taken, matched_at)
+        VALUES (?, ?, 'exact', ?, ?, ?, ?, ?, ?)
+    """, (ioc_id, matched_value, detection_source, file_path,
+          threat_level, confidence_score, action_taken, now))
+    
+    match_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    
+    return match_id
+
+
+def get_ioc_statistics() -> Dict[str, Any]:
+    """Get IOC statistics"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    # Total IOCs
+    cursor.execute("SELECT COUNT(*) as total FROM iocs WHERE is_active = 1")
+    total = cursor.fetchone()["total"]
+    
+    # By type
+    cursor.execute("""
+        SELECT ioc_type, COUNT(*) as count 
+        FROM iocs 
+        WHERE is_active = 1
+        GROUP BY ioc_type
+    """)
+    type_rows = cursor.fetchall()
+    by_type = {row["ioc_type"]: row["count"] for row in type_rows}
+    
+    # By severity
+    cursor.execute("""
+        SELECT severity, COUNT(*) as count 
+        FROM iocs 
+        WHERE is_active = 1
+        GROUP BY severity
+    """)
+    severity_rows = cursor.fetchall()
+    by_severity = {row["severity"]: row["count"] for row in severity_rows}
+    
+    # Total matches
+    cursor.execute("SELECT COUNT(*) as total FROM threat_matches")
+    total_matches = cursor.fetchone()["total"]
+    
+    # Recent threats
+    cursor.execute("""
+        SELECT COUNT(*) as count 
+        FROM iocs 
+        WHERE is_active = 1 AND severity IN ('high', 'critical')
+        AND date(created_at) >= date('now', '-7 days')
+    """)
+    recent_high = cursor.fetchone()["count"]
+    
+    conn.close()
+    
+    return {
+        "total_iocs": total,
+        "iocs_by_type": by_type,
+        "iocs_by_severity": by_severity,
+        "total_matches": total_matches,
+        "recent_high_severity": recent_high,
+        "last_updated": datetime.now().isoformat()
+    }
 
 # Initialize database on module import
 init_database()
