@@ -334,12 +334,11 @@ async def batch_threat_action(request: Request, batch: BatchThreatAction):
 
 @router.get("/threats/{threat_id}/correlations")
 @limiter.limit(READ_LIMIT)
-async def get_threat_ioc_correlations(request: Request, threat_id: int):
+async def get_threat_ioc_correlations(threat_id: int, request: Request):
     """
     Get IOC correlations for a specific threat
     """
     try:
-        from database import db as database
         correlations = db.get_threat_correlations(threat_id)
         
         return {
@@ -348,5 +347,5 @@ async def get_threat_ioc_correlations(request: Request, threat_id: int):
         }
     except Exception as e:
         logger.error(f"Error getting threat correlations: {e}")
-        raise HTTPException(status_code=500, detail=str(e))    
+        raise HTTPException(status_code=500, detail=str(e))
     
