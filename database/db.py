@@ -2448,13 +2448,13 @@ def get_mitre_statistics() -> Dict[str, Any]:
         "last_updated": datetime.now().isoformat()
         
     }
-def correlate_threat_with_iocs(self, threat_id: int):
+def correlate_threat_with_iocs(threat_id: int):
         """
         Correlate a threat with matching IOCs
         Returns list of matched IOCs
         """
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = sqlite3.connect(str(DB_PATH))
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             
@@ -2503,18 +2503,18 @@ def correlate_threat_with_iocs(self, threat_id: int):
             logger.error(f"Error correlating threat with IOCs: {e}")
             return []
     
-def get_threat_correlations(self, threat_id: int):
+def get_threat_correlations(threat_id: int):
         """
         Get all IOC correlations for a threat
         """
         try:
-            correlations = self.correlate_threat_with_iocs(threat_id)
+            correlations = correlate_threat_with_iocs(threat_id)
             
             return {
                 "threat_id": threat_id,
                 "matched_iocs": correlations,
                 "match_count": len(correlations),
-                "correlation_score": self._calculate_correlation_score(correlations)
+                "correlation_score": _calculate_correlation_score(correlations)
             }
             
         except Exception as e:
@@ -2526,7 +2526,7 @@ def get_threat_correlations(self, threat_id: int):
                 "correlation_score": 0
             }
     
-def _calculate_correlation_score(self, matched_iocs: list) -> float:
+def _calculate_correlation_score(matched_iocs: list) -> float:
         """
         Calculate correlation confidence score (0-100)
         """
