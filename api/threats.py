@@ -349,3 +349,5 @@ async def get_threat_ioc_correlations(threat_id: int, request: Request):
         logger.error(f"Error getting threat correlations: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     
+    
+    
