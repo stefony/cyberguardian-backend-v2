@@ -8,6 +8,10 @@ from datetime import datetime
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 import json
+import logging
+import hashlib
+
+logger = logging.getLogger(__name__)
 
 
 # Database file path
@@ -2442,6 +2446,99 @@ def get_mitre_statistics() -> Dict[str, Any]:
         "total_mappings": total_mappings,
         "top_mapped_techniques": top_techniques,
         "last_updated": datetime.now().isoformat()
+        
     }
+def correlate_threat_with_iocs(self, threat_id: int):
+        """
+        Correlate a threat with matching IOCs
+        Returns list of matched IOCs
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            # Get threat details
+            cursor.execute("""
+                SELECT file_hash, file_path, detection_type, threat_name
+                FROM threats
+                WHERE id = ?
+            """, (threat_id,))
+            
+            threat = cursor.fetchone()
+            if not threat:
+                return []
+            
+            matched_iocs = []
+            
+            # Check file hash match
+            if threat['file_hash']:
+                cursor.execute("""
+                    SELECT id, ioc_value, ioc_type, threat_name, severity, confidence
+                    FROM iocs
+                    WHERE ioc_type = 'hash' AND ioc_value = ?
+                """, (threat['file_hash'],))
+                
+                hash_matches = cursor.fetchall()
+                for match in hash_matches:
+                    matched_iocs.append(dict(match))
+            
+            # Check if file path contains malicious domains/IPs
+            if threat['file_path']:
+                cursor.execute("""
+                    SELECT id, ioc_value, ioc_type, threat_name, severity, confidence
+                    FROM iocs
+                    WHERE ioc_type IN ('domain', 'ip', 'url')
+                """)
+                
+                path_iocs = cursor.fetchall()
+                for ioc in path_iocs:
+                    if ioc['ioc_value'].lower() in threat['file_path'].lower():
+                        matched_iocs.append(dict(ioc))
+            
+            conn.close()
+            return matched_iocs
+            
+        except Exception as e:
+            logger.error(f"Error correlating threat with IOCs: {e}")
+            return []
+    
+def get_threat_correlations(self, threat_id: int):
+        """
+        Get all IOC correlations for a threat
+        """
+        try:
+            correlations = self.correlate_threat_with_iocs(threat_id)
+            
+            return {
+                "threat_id": threat_id,
+                "matched_iocs": correlations,
+                "match_count": len(correlations),
+                "correlation_score": self._calculate_correlation_score(correlations)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting threat correlations: {e}")
+            return {
+                "threat_id": threat_id,
+                "matched_iocs": [],
+                "match_count": 0,
+                "correlation_score": 0
+            }
+    
+def _calculate_correlation_score(self, matched_iocs: list) -> float:
+        """
+        Calculate correlation confidence score (0-100)
+        """
+        if not matched_iocs:
+            return 0.0
+        
+        total_confidence = sum(ioc.get('confidence', 50) for ioc in matched_iocs)
+        avg_confidence = total_confidence / len(matched_iocs)
+        
+        match_bonus = min(len(matched_iocs) * 10, 30)
+        
+        score = min(avg_confidence + match_bonus, 100)
+        return round(score, 1)   
 # Initialize database on module import
 init_database()

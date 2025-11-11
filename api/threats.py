@@ -10,6 +10,7 @@ from datetime import datetime
 from fastapi import Request
 from middleware.rate_limiter import limiter, READ_LIMIT, WRITE_LIMIT
 
+from database import db
 from database.db import (
     get_threats as db_get_threats,
     get_threat_by_id as db_get_threat_by_id,
@@ -17,6 +18,9 @@ from database.db import (
     update_threat_status as db_update_threat_status,
     get_threat_stats as db_get_threat_stats
 )
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -327,4 +331,22 @@ async def batch_threat_action(request: Request, batch: BatchThreatAction):
         "message": f"{len(results['success'])} threats processed successfully",
         "results": results
     }
+
+@router.get("/threats/{threat_id}/correlations")
+@limiter.limit(READ_LIMIT)
+async def get_threat_ioc_correlations(request: Request, threat_id: int):
+    """
+    Get IOC correlations for a specific threat
+    """
+    try:
+        from database import db as database
+        correlations = db.get_threat_correlations(threat_id)
+        
+        return {
+            "success": True,
+            "correlations": correlations
+        }
+    except Exception as e:
+        logger.error(f"Error getting threat correlations: {e}")
+        raise HTTPException(status_code=500, detail=str(e))    
     
