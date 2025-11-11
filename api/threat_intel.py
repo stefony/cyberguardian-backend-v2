@@ -289,3 +289,167 @@ async def check_live_feeds(request: Request, body: IOCCheckRequest):
     except Exception as e:
         logger.error(f"Error checking live feeds: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    
+    # ============================================
+# THREAT FEED MANAGEMENT
+# ============================================
+
+# Mock feed sources - в бъдеще ще идват от database
+FEED_SOURCES = [
+    {
+        "id": 1,
+        "name": "VirusTotal",
+        "type": "file_hash",
+        "enabled": True,
+        "url": "https://www.virustotal.com/api/v3/",
+        "last_update": "2025-11-10T15:30:00Z",
+        "status": "active",
+        "ioc_count": 1250000,
+        "api_key_required": True,
+        "description": "Comprehensive file, URL, and domain intelligence"
+    },
+    {
+        "id": 2,
+        "name": "AlienVault OTX",
+        "type": "multi",
+        "enabled": True,
+        "url": "https://otx.alienvault.com/api/v1/",
+        "last_update": "2025-11-10T14:20:00Z",
+        "status": "active",
+        "ioc_count": 850000,
+        "api_key_required": True,
+        "description": "Open Threat Exchange - Community-driven threat intelligence"
+    },
+    {
+        "id": 3,
+        "name": "AbuseIPDB",
+        "type": "ip",
+        "enabled": True,
+        "url": "https://api.abuseipdb.com/api/v2/",
+        "last_update": "2025-11-10T16:00:00Z",
+        "status": "active",
+        "ioc_count": 450000,
+        "api_key_required": True,
+        "description": "IP address abuse reports and blacklists"
+    },
+    {
+        "id": 4,
+        "name": "URLhaus",
+        "type": "url",
+        "enabled": True,
+        "url": "https://urlhaus.abuse.ch/api/",
+        "last_update": "2025-11-10T13:45:00Z",
+        "status": "active",
+        "ioc_count": 320000,
+        "api_key_required": False,
+        "description": "Malware URL distribution sites"
+    },
+    {
+        "id": 5,
+        "name": "PhishTank",
+        "type": "url",
+        "enabled": False,
+        "url": "https://checkurl.phishtank.com/",
+        "last_update": "2025-11-09T10:30:00Z",
+        "status": "inactive",
+        "ioc_count": 180000,
+        "api_key_required": True,
+        "description": "Collaborative phishing site database"
+    },
+    {
+        "id": 6,
+        "name": "Malware Bazaar",
+        "type": "file_hash",
+        "enabled": True,
+        "url": "https://mb-api.abuse.ch/api/v1/",
+        "last_update": "2025-11-10T15:00:00Z",
+        "status": "active",
+        "ioc_count": 95000,
+        "api_key_required": False,
+        "description": "Malware sample repository"
+    }
+]
+
+@router.get("/feeds")
+@limiter.limit(READ_LIMIT)
+async def get_threat_feeds(request: Request):
+    """
+    Get all configured threat intelligence feeds with their status
+    """
+    try:
+        # Calculate statistics
+        total_feeds = len(FEED_SOURCES)
+        active_feeds = len([f for f in FEED_SOURCES if f["enabled"]])
+        total_iocs = sum(f["ioc_count"] for f in FEED_SOURCES if f["enabled"])
+        
+        return {
+            "success": True,
+            "feeds": FEED_SOURCES,
+            "statistics": {
+                "total_feeds": total_feeds,
+                "active_feeds": active_feeds,
+                "inactive_feeds": total_feeds - active_feeds,
+                "total_iocs": total_iocs
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error fetching threat feeds: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/feeds/{feed_id}/toggle")
+@limiter.limit(WRITE_LIMIT)
+async def toggle_feed(request: Request, feed_id: int):
+    """
+    Enable or disable a threat feed
+    """
+    try:
+        feed = next((f for f in FEED_SOURCES if f["id"] == feed_id), None)
+        if not feed:
+            raise HTTPException(status_code=404, detail="Feed not found")
+        
+        feed["enabled"] = not feed["enabled"]
+        feed["status"] = "active" if feed["enabled"] else "inactive"
+        
+        return {
+            "success": True,
+            "feed_id": feed_id,
+            "enabled": feed["enabled"],
+            "message": f"Feed {'enabled' if feed['enabled'] else 'disabled'} successfully"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error toggling feed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/feeds/{feed_id}/refresh")
+@limiter.limit(WRITE_LIMIT)
+async def refresh_feed(request: Request, feed_id: int):
+    """
+    Manually refresh a specific threat feed
+    """
+    try:
+        feed = next((f for f in FEED_SOURCES if f["id"] == feed_id), None)
+        if not feed:
+            raise HTTPException(status_code=404, detail="Feed not found")
+        
+        if not feed["enabled"]:
+            raise HTTPException(status_code=400, detail="Feed is not enabled")
+        
+        # Update last_update timestamp
+        feed["last_update"] = datetime.utcnow().isoformat() + "Z"
+        
+        return {
+            "success": True,
+            "feed_id": feed_id,
+            "feed_name": feed["name"],
+            "last_update": feed["last_update"],
+            "message": f"{feed['name']} refreshed successfully"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error refreshing feed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
