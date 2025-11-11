@@ -301,7 +301,7 @@ FEED_SOURCES = [
         "name": "VirusTotal",
         "type": "file_hash",
         "enabled": True,
-        "url": "https://www.virustotal.com/api/v3/",
+        "url": "https://www.virustotal.com",  # ← ПРОМЕНЕНО
         "last_update": "2025-11-10T15:30:00Z",
         "status": "active",
         "ioc_count": 1250000,
@@ -313,7 +313,7 @@ FEED_SOURCES = [
         "name": "AlienVault OTX",
         "type": "multi",
         "enabled": True,
-        "url": "https://otx.alienvault.com/api/v1/",
+        "url": "https://otx.alienvault.com",  # ← ПРОМЕНЕНО
         "last_update": "2025-11-10T14:20:00Z",
         "status": "active",
         "ioc_count": 850000,
@@ -325,7 +325,7 @@ FEED_SOURCES = [
         "name": "AbuseIPDB",
         "type": "ip",
         "enabled": True,
-        "url": "https://api.abuseipdb.com/api/v2/",
+        "url": "https://www.abuseipdb.com",  # ← ПРОМЕНЕНО
         "last_update": "2025-11-10T16:00:00Z",
         "status": "active",
         "ioc_count": 450000,
@@ -337,7 +337,7 @@ FEED_SOURCES = [
         "name": "URLhaus",
         "type": "url",
         "enabled": True,
-        "url": "https://urlhaus.abuse.ch/api/",
+        "url": "https://urlhaus.abuse.ch",  # ← ПРОМЕНЕНО (remove /api/)
         "last_update": "2025-11-10T13:45:00Z",
         "status": "active",
         "ioc_count": 320000,
@@ -349,7 +349,7 @@ FEED_SOURCES = [
         "name": "PhishTank",
         "type": "url",
         "enabled": False,
-        "url": "https://checkurl.phishtank.com/",
+        "url": "https://www.phishtank.com",  # ← ПРОМЕНЕНО
         "last_update": "2025-11-09T10:30:00Z",
         "status": "inactive",
         "ioc_count": 180000,
@@ -361,7 +361,7 @@ FEED_SOURCES = [
         "name": "Malware Bazaar",
         "type": "file_hash",
         "enabled": True,
-        "url": "https://mb-api.abuse.ch/api/v1/",
+        "url": "https://bazaar.abuse.ch",  # ← ПРОМЕНЕНО
         "last_update": "2025-11-10T15:00:00Z",
         "status": "active",
         "ioc_count": 95000,
