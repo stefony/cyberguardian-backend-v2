@@ -3,13 +3,57 @@ Registry Cleaner - Windows Registry Malware Persistence Detection & Removal
 Scans common autorun registry keys and removes malicious entries
 """
 
-import winreg
 import json
 import hashlib
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple
 import os
 import platform
+
+# Only import winreg on Windows
+if platform.system() == "Windows":
+    import winreg
+else:
+    # Mock winreg for non-Windows systems
+    class MockWinreg:
+        HKEY_LOCAL_MACHINE = 0
+        HKEY_CURRENT_USER = 1
+        HKEY_CLASSES_ROOT = 2
+        HKEY_USERS = 3
+        HKEY_CURRENT_CONFIG = 4
+        KEY_READ = 0
+        KEY_SET_VALUE = 0
+        REG_SZ = 0
+        REG_EXPAND_SZ = 0
+        REG_BINARY = 0
+        REG_DWORD = 0
+        REG_MULTI_SZ = 0
+        
+        @staticmethod
+        def OpenKey(*args, **kwargs):
+            raise OSError("Not a Windows system")
+        
+        @staticmethod
+        def EnumValue(*args, **kwargs):
+            raise OSError("Not a Windows system")
+        
+        @staticmethod
+        def CloseKey(*args, **kwargs):
+            pass
+        
+        @staticmethod
+        def QueryValueEx(*args, **kwargs):
+            raise OSError("Not a Windows system")
+        
+        @staticmethod
+        def DeleteValue(*args, **kwargs):
+            raise OSError("Not a Windows system")
+        
+        @staticmethod
+        def SetValueEx(*args, **kwargs):
+            raise OSError("Not a Windows system")
+    
+    winreg = MockWinreg()
 
 # Common autorun registry keys that malware uses for persistence
 AUTORUN_KEYS = [
