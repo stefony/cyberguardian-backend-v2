@@ -453,3 +453,29 @@ async def refresh_feed(request: Request, feed_id: int):
     except Exception as e:
         logger.error(f"Error refreshing feed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    
+    # ============================================
+# AUTOMATED UPDATES
+# ============================================
+
+from core.scheduler import get_scheduler_status
+
+@router.get("/auto-update/status")
+@limiter.limit(READ_LIMIT)
+async def get_auto_update_status(request: Request):
+    """
+    Get automated threat intelligence update status
+    """
+    try:
+        scheduler_status = get_scheduler_status()
+        
+        return {
+            "success": True,
+            "auto_updates_enabled": scheduler_status.get("running", False),
+            "next_update": scheduler_status["jobs"][0]["next_run"] if scheduler_status.get("jobs") else None,
+            "update_interval": "6 hours",
+            "last_update": None  # TODO: Store in database
+        }
+    except Exception as e:
+        logger.error(f"Error getting auto-update status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

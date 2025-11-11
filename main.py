@@ -42,6 +42,8 @@ from slowapi.errors import RateLimitExceeded
 # Initialize admin user on startup
 from database.init_admin import init_admin_user
 
+from core.scheduler import start_scheduler, stop_scheduler
+
 # ============================================
 # Setup Logging (BEFORE app creation)
 # ============================================
@@ -60,8 +62,15 @@ async def lifespan(app: FastAPI):
     print("   ✍️  Write: 30 req/min")
     print("   🔥 Threat Intel: 60 req/min")
     init_admin_user()
+    
+    # Start background scheduler
+    start_scheduler()
+    print("⏰ Automated Intelligence Updates: ENABLED (every 6 hours)")
+    
     yield
+    
     # Shutdown
+    stop_scheduler()
     app_logger.info("👋 Shutting down...")
     print("👋 Shutting down...")
 
