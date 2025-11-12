@@ -25,6 +25,11 @@ from core.response.service_manager import (
     delete_windows_service,
     get_service_statistics,
 )
+from core.response.task_manager import (
+    scan_scheduled_tasks,
+    delete_scheduled_task,
+    get_task_statistics,
+)
 from middleware.rate_limiter import limiter, WRITE_LIMIT, READ_LIMIT
 
 router = APIRouter(prefix="/api/remediation", tags=["remediation"])
@@ -417,7 +422,7 @@ async def list_service_backups(request: Request):
         raise HTTPException(status_code=500, detail=f"Failed to list backups: {str(e)}")
 
 
-# ===== SCHEDULED TASKS CLEANUP ENDPOINTS (Placeholder for next steps) =====
+# ===== SCHEDULED TASKS CLEANUP ENDPOINTS =====
 
 @router.get("/tasks/scan")
 @limiter.limit(READ_LIMIT)
@@ -425,26 +430,129 @@ async def scan_tasks(request: Request):
     """
     Scan Windows scheduled tasks for suspicious entries
     
-    TODO: Implement task scanner
+    Returns:
+        List of suspicious tasks with statistics
     """
-    return {
-        "message": "Task scanning will be implemented in Phase 3.1 Step 3",
-        "tasks": [],
-    }
+    try:
+        # Scan tasks
+        tasks = scan_scheduled_tasks()
+        
+        # Get statistics
+        statistics = get_task_statistics(tasks)
+        
+        return {
+            "tasks": tasks,
+            "statistics": statistics,
+            "scanned_at": datetime.utcnow().isoformat(),
+        }
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Task scan failed: {str(e)}")
+
+
+@router.get("/tasks/statistics")
+@limiter.limit(READ_LIMIT)
+async def get_task_stats(request: Request):
+    """
+    Get statistics from the last task scan
+    
+    Returns:
+        Task scan statistics
+    """
+    try:
+        # Scan tasks
+        tasks = scan_scheduled_tasks()
+        
+        # Get statistics
+        statistics = get_task_statistics(tasks)
+        
+        return statistics
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get statistics: {str(e)}")
 
 
 @router.post("/tasks/remove")
 @limiter.limit(WRITE_LIMIT)
-async def remove_task(request: Request):
+async def remove_task(request: Request, data: dict):
     """
-    Remove a suspicious Windows scheduled task
+    Remove a suspicious scheduled task (with automatic backup)
     
-    TODO: Implement task removal
+    Args:
+        task_path: Full path to the task
+    
+    Returns:
+        Success status and backup file path
     """
-    return {
-        "success": False,
-        "message": "Task removal will be implemented in Phase 3.1 Step 3",
-    }
+    try:
+        task_path = data.get("task_path")
+        if not task_path:
+            raise HTTPException(status_code=400, detail="task_path is required")
+        
+        success, result = delete_scheduled_task(task_path)
+        
+        if success:
+            return {
+                "success": True,
+                "message": "Task removed successfully",
+                "backup_file": result,
+            }
+        else:
+            return {
+                "success": False,
+                "message": result,
+                "backup_file": None,
+            }
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to remove task: {str(e)}")
+
+
+@router.get("/tasks/backups")
+@limiter.limit(READ_LIMIT)
+async def list_task_backups(request: Request):
+    """
+    List all task backup files
+    
+    Returns:
+        List of backup files with metadata
+    """
+    try:
+        import json
+        backup_dir = "task_backups"
+        
+        if not os.path.exists(backup_dir):
+            return {"backups": []}
+        
+        backups = []
+        for filename in os.listdir(backup_dir):
+            if filename.endswith(".json"):
+                filepath = os.path.join(backup_dir, filename)
+                
+                # Read backup metadata
+                try:
+                    with open(filepath, "r", encoding="utf-8") as f:
+                        backup_data = json.load(f)
+                    
+                    backups.append({
+                        "filename": filename,
+                        "filepath": filepath,
+                        "task_path": backup_data.get("task_path", "Unknown"),
+                        "task_name": backup_data.get("task_name", "Unknown"),
+                        "author": backup_data.get("author", "Unknown"),
+                        "backed_up_at": backup_data.get("backed_up_at", "Unknown"),
+                    })
+                except:
+                    # Skip corrupted backups
+                    continue
+        
+        # Sort by backup time (newest first)
+        backups.sort(key=lambda x: x["backed_up_at"], reverse=True)
+        
+        return {"backups": backups}
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list backups: {str(e)}")
 
 
 # ===== LINUX CLEANUP ENDPOINTS (Placeholder for Phase 3.2) =====
