@@ -19,6 +19,12 @@ from core.response.registry_cleaner import (
     restore_registry_entry,
     get_registry_statistics,
 )
+from core.response.service_manager import (
+    scan_windows_services,
+    stop_windows_service,
+    delete_windows_service,
+    get_service_statistics,
+)
 from middleware.rate_limiter import limiter, WRITE_LIMIT, READ_LIMIT
 
 router = APIRouter(prefix="/api/remediation", tags=["remediation"])
@@ -250,7 +256,7 @@ async def list_registry_backups(request: Request):
         raise HTTPException(status_code=500, detail=f"Failed to list backups: {str(e)}")
 
 
-# ===== SERVICES CLEANUP ENDPOINTS (Placeholder for next steps) =====
+# ===== SERVICES CLEANUP ENDPOINTS =====
 
 @router.get("/services/scan")
 @limiter.limit(READ_LIMIT)
@@ -258,26 +264,157 @@ async def scan_services(request: Request):
     """
     Scan Windows services for suspicious entries
     
-    TODO: Implement service scanner
+    Returns:
+        List of suspicious services with statistics
     """
-    return {
-        "message": "Service scanning will be implemented in Phase 3.1 Step 2",
-        "services": [],
-    }
+    try:
+        # Scan services
+        services = scan_windows_services()
+        
+        # Get statistics
+        statistics = get_service_statistics(services)
+        
+        return {
+            "services": services,
+            "statistics": statistics,
+            "scanned_at": datetime.utcnow().isoformat(),
+        }
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Service scan failed: {str(e)}")
+
+
+@router.get("/services/statistics")
+@limiter.limit(READ_LIMIT)
+async def get_service_stats(request: Request):
+    """
+    Get statistics from the last service scan
+    
+    Returns:
+        Service scan statistics
+    """
+    try:
+        # Scan services
+        services = scan_windows_services()
+        
+        # Get statistics
+        statistics = get_service_statistics(services)
+        
+        return statistics
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get statistics: {str(e)}")
+
+
+@router.post("/services/stop")
+@limiter.limit(WRITE_LIMIT)
+async def stop_service(request: Request, data: dict):
+    """
+    Stop a Windows service
+    
+    Args:
+        service_name: Name of the service to stop
+    
+    Returns:
+        Success status and message
+    """
+    try:
+        service_name = data.get("service_name")
+        if not service_name:
+            raise HTTPException(status_code=400, detail="service_name is required")
+        
+        success, message = stop_windows_service(service_name)
+        
+        return {
+            "success": success,
+            "message": message,
+        }
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to stop service: {str(e)}")
 
 
 @router.post("/services/remove")
 @limiter.limit(WRITE_LIMIT)
-async def remove_service(request: Request):
+async def remove_service(request: Request, data: dict):
     """
-    Remove a suspicious Windows service
+    Remove a suspicious Windows service (with automatic backup)
     
-    TODO: Implement service removal
+    Args:
+        service_name: Name of the service to remove
+    
+    Returns:
+        Success status and backup file path
     """
-    return {
-        "success": False,
-        "message": "Service removal will be implemented in Phase 3.1 Step 2",
-    }
+    try:
+        service_name = data.get("service_name")
+        if not service_name:
+            raise HTTPException(status_code=400, detail="service_name is required")
+        
+        success, result = delete_windows_service(service_name)
+        
+        if success:
+            return {
+                "success": True,
+                "message": "Service removed successfully",
+                "backup_file": result,
+            }
+        else:
+            return {
+                "success": False,
+                "message": result,
+                "backup_file": None,
+            }
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to remove service: {str(e)}")
+
+
+@router.get("/services/backups")
+@limiter.limit(READ_LIMIT)
+async def list_service_backups(request: Request):
+    """
+    List all service backup files
+    
+    Returns:
+        List of backup files with metadata
+    """
+    try:
+        import json
+        backup_dir = "service_backups"
+        
+        if not os.path.exists(backup_dir):
+            return {"backups": []}
+        
+        backups = []
+        for filename in os.listdir(backup_dir):
+            if filename.endswith(".json"):
+                filepath = os.path.join(backup_dir, filename)
+                
+                # Read backup metadata
+                try:
+                    with open(filepath, "r") as f:
+                        backup_data = json.load(f)
+                    
+                    backups.append({
+                        "filename": filename,
+                        "filepath": filepath,
+                        "service_name": backup_data.get("service_name", "Unknown"),
+                        "binary_path": backup_data.get("binary_path", "Unknown"),
+                        "startup_type": backup_data.get("startup_type", "Unknown"),
+                        "backed_up_at": backup_data.get("backed_up_at", "Unknown"),
+                    })
+                except:
+                    # Skip corrupted backups
+                    continue
+        
+        # Sort by backup time (newest first)
+        backups.sort(key=lambda x: x["backed_up_at"], reverse=True)
+        
+        return {"backups": backups}
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list backups: {str(e)}")
 
 
 # ===== SCHEDULED TASKS CLEANUP ENDPOINTS (Placeholder for next steps) =====
