@@ -480,6 +480,47 @@ def init_database():
         )
     """)
     
+    # ============================================
+    # INTEGRITY MONITORING TABLES
+    # ============================================
+    
+    # Integrity logs table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS integrity_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_path TEXT NOT NULL,
+            expected_checksum TEXT NOT NULL,
+            actual_checksum TEXT,
+            status TEXT NOT NULL,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            details TEXT
+        )
+    """)
+    
+    # File manifests table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS file_manifests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            version TEXT NOT NULL,
+            manifest_data TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
+    # Integrity alerts table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS integrity_alerts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            alert_type TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            file_path TEXT,
+            message TEXT NOT NULL,
+            resolved INTEGER DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            resolved_at DATETIME
+        )
+    """)
+    
     conn.commit()
     conn.close()
     
@@ -2540,5 +2581,327 @@ def _calculate_correlation_score(matched_iocs: list) -> float:
         
         score = min(avg_confidence + match_bonus, 100)
         return round(score, 1)   
+    
+    # ============================================================================
+# INTEGRITY MONITORING FUNCTIONS
+# ============================================================================
+
+def log_integrity_check(file_path: str, expected_checksum: str, actual_checksum: str, 
+                        status: str, details: str = None):
+    """
+    Log an integrity check result
+    
+    Args:
+        file_path: Path to checked file
+        expected_checksum: Expected SHA256 checksum
+        actual_checksum: Actual SHA256 checksum (None if missing)
+        status: Check status (OK, MODIFIED, MISSING, ERROR)
+        details: Additional details
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        INSERT INTO integrity_logs (file_path, expected_checksum, actual_checksum, status, details)
+        VALUES (?, ?, ?, ?, ?)
+    """, (file_path, expected_checksum, actual_checksum, status, details))
+    
+    conn.commit()
+    conn.close()
+
+
+def get_integrity_logs(limit: int = 100, status_filter: str = None):
+    """
+    Get integrity check logs
+    
+    Args:
+        limit: Maximum number of logs to return
+        status_filter: Filter by status (OK, MODIFIED, MISSING, ERROR)
+        
+    Returns:
+        List of integrity logs
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    if status_filter:
+        cursor.execute("""
+            SELECT * FROM integrity_logs 
+            WHERE status = ?
+            ORDER BY timestamp DESC 
+            LIMIT ?
+        """, (status_filter, limit))
+    else:
+        cursor.execute("""
+            SELECT * FROM integrity_logs 
+            ORDER BY timestamp DESC 
+            LIMIT ?
+        """, (limit,))
+    
+    logs = []
+    for row in cursor.fetchall():
+        logs.append({
+            'id': row[0],
+            'file_path': row[1],
+            'expected_checksum': row[2],
+            'actual_checksum': row[3],
+            'status': row[4],
+            'timestamp': row[5],
+            'details': row[6]
+        })
+    
+    conn.close()
+    return logs
+
+
+def save_manifest_to_db(version: str, manifest_data: dict):
+    """
+    Save manifest to database
+    
+    Args:
+        version: Manifest version
+        manifest_data: Manifest dictionary
+    """
+    import json
+    
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        INSERT INTO file_manifests (version, manifest_data)
+        VALUES (?, ?)
+    """, (version, json.dumps(manifest_data)))
+    
+    conn.commit()
+    conn.close()
+
+
+def get_latest_manifest():
+    """
+    Get latest manifest from database
+    
+    Returns:
+        Manifest dictionary or None
+    """
+    import json
+    
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT * FROM file_manifests 
+        ORDER BY created_at DESC 
+        LIMIT 1
+    """)
+    
+    row = cursor.fetchone()
+    conn.close()
+    
+    if row:
+        return {
+            "id": row[0],
+            "version": row[1],
+            "manifest_data": json.loads(row[2]),
+            "created_at": row[3]
+        }
+    
+    return None
+
+
+def get_all_manifests(limit: int = 10):
+    """
+    Get all manifests (for history)
+    
+    Args:
+        limit: Maximum number of manifests to return
+        
+    Returns:
+        List of manifest records
+    """
+    import json
+    
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT id, version, created_at FROM file_manifests 
+        ORDER BY created_at DESC 
+        LIMIT ?
+    """, (limit,))
+    
+    manifests = []
+    for row in cursor.fetchall():
+        manifests.append({
+            'id': row[0],
+            'version': row[1],
+            'created_at': row[2]
+        })
+    
+    conn.close()
+    return manifests
+
+
+def create_integrity_alert(alert_type: str, severity: str, message: str, 
+                          file_path: str = None):
+    """
+    Create an integrity alert
+    
+    Args:
+        alert_type: Type of alert (FILE_MODIFIED, FILE_MISSING, TAMPER_DETECTED)
+        severity: Alert severity (LOW, MEDIUM, HIGH, CRITICAL)
+        message: Alert message
+        file_path: Path to affected file
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        INSERT INTO integrity_alerts (alert_type, severity, file_path, message)
+        VALUES (?, ?, ?, ?)
+    """, (alert_type, severity, file_path, message))
+    
+    conn.commit()
+    conn.close()
+
+
+def get_integrity_alerts(resolved: bool = None, limit: int = 50):
+    """
+    Get integrity alerts
+    
+    Args:
+        resolved: Filter by resolved status (True/False/None for all)
+        limit: Maximum number of alerts
+        
+    Returns:
+        List of alerts
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    if resolved is not None:
+        cursor.execute("""
+            SELECT * FROM integrity_alerts 
+            WHERE resolved = ?
+            ORDER BY created_at DESC 
+            LIMIT ?
+        """, (1 if resolved else 0, limit))
+    else:
+        cursor.execute("""
+            SELECT * FROM integrity_alerts 
+            ORDER BY created_at DESC 
+            LIMIT ?
+        """, (limit,))
+    
+    alerts = []
+    for row in cursor.fetchall():
+        alerts.append({
+            'id': row[0],
+            'alert_type': row[1],
+            'severity': row[2],
+            'file_path': row[3],
+            'message': row[4],
+            'resolved': bool(row[5]),
+            'created_at': row[6],
+            'resolved_at': row[7]
+        })
+    
+    conn.close()
+    return alerts
+
+
+def resolve_integrity_alert(alert_id: int):
+    """
+    Mark an integrity alert as resolved
+    
+    Args:
+        alert_id: Alert ID
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        UPDATE integrity_alerts 
+        SET resolved = 1, resolved_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+    """, (alert_id,))
+    
+    conn.commit()
+    conn.close()
+
+
+def get_integrity_statistics():
+    """
+    Get integrity monitoring statistics
+    
+    Returns:
+        Dictionary with statistics
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    # Total checks
+    cursor.execute("SELECT COUNT(*) FROM integrity_logs")
+    total_checks = cursor.fetchone()[0]
+    
+    # Checks by status
+    cursor.execute("""
+        SELECT status, COUNT(*) as count 
+        FROM integrity_logs 
+        GROUP BY status
+    """)
+    status_counts = {row[0]: row[1] for row in cursor.fetchall()}
+    
+    # Active alerts
+    cursor.execute("SELECT COUNT(*) FROM integrity_alerts WHERE resolved = 0")
+    active_alerts = cursor.fetchone()[0]
+    
+    # Recent compromised files (last 24 hours)
+    cursor.execute("""
+        SELECT COUNT(DISTINCT file_path) 
+        FROM integrity_logs 
+        WHERE status IN ('MODIFIED', 'MISSING') 
+        AND timestamp > datetime('now', '-1 day')
+    """)
+    recent_compromised = cursor.fetchone()[0]
+    
+    # Total manifests
+    cursor.execute("SELECT COUNT(*) FROM file_manifests")
+    total_manifests = cursor.fetchone()[0]
+    
+    conn.close()
+    
+    return {
+        "total_checks": total_checks,
+        "status_counts": status_counts,
+        "active_alerts": active_alerts,
+        "recent_compromised": recent_compromised,
+        "total_manifests": total_manifests
+    }
+
+
+def delete_old_integrity_logs(days: int = 30):
+    """
+    Delete integrity logs older than specified days
+    
+    Args:
+        days: Number of days to keep logs
+        
+    Returns:
+        Number of deleted logs
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        DELETE FROM integrity_logs 
+        WHERE timestamp < datetime('now', '-' || ? || ' days')
+    """, (days,))
+    
+    deleted_count = cursor.rowcount
+    conn.commit()
+    conn.close()
+    
+    return deleted_count
+    
 # Initialize database on module import
 init_database()

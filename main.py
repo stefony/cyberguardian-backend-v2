@@ -29,6 +29,7 @@ from api.signatures import router as signatures_router
 from api.threat_intel import router as threat_intel_router
 from api.remediation import router as remediation_router
 from api import mitre
+from api.integrity import router as integrity_router
 
 # ============================================
 # Logging (set up BEFORE app creation)
@@ -153,7 +154,7 @@ app.include_router(signatures_router, prefix="/api/signatures", tags=["Signature
 app.include_router(threat_intel_router, prefix="/api/threat-intel", tags=["Threat Intelligence"])
 app.include_router(mitre.router, prefix="/api/mitre", tags=["MITRE ATT&CK"])
 app.include_router(remediation_router, tags=["Remediation"])
-
+app.include_router(integrity_router)
 
 # ============================================
 # Root
