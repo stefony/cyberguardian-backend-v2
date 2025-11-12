@@ -3,7 +3,7 @@ Remediation API - Endpoints for malware cleanup and removal
 Handles registry cleanup, services management, scheduled tasks, etc.
 """
 
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, HTTPException, Depends, Request, File, UploadFile
 from pydantic import BaseModel
 from typing import List, Dict, Optional
 from datetime import datetime
@@ -656,6 +656,49 @@ async def complete_malware_removal(request: Request):
 
 
 # ===== DEEP QUARANTINE ENDPOINTS =====
+
+@router.post("/deep-quarantine/upload")
+@limiter.limit(WRITE_LIMIT)
+async def upload_and_analyze(request: Request, file: UploadFile = File(...)):
+    """
+    Upload a file and perform deep analysis
+    
+    Args:
+        file: File to analyze
+    
+    Returns:
+        Comprehensive analysis results
+    """
+    import tempfile
+    import shutil
+    
+    try:
+        # Create temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as temp_file:
+            # Copy uploaded file to temp
+            shutil.copyfileobj(file.file, temp_file)
+            temp_path = temp_file.name
+        
+        try:
+            # Analyze the temporary file
+            analysis = analyze_deep(temp_path)
+            
+            # Add original filename to analysis
+            if isinstance(analysis, dict):
+                analysis["original_filename"] = file.filename
+            
+            return analysis
+        
+        finally:
+            # Clean up temporary file
+            try:
+                os.unlink(temp_path)
+            except:
+                pass
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Upload and analysis failed: {str(e)}")
+
 
 @router.post("/deep-quarantine/analyze")
 @limiter.limit(WRITE_LIMIT)
