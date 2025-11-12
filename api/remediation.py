@@ -30,6 +30,11 @@ from core.response.task_manager import (
     delete_scheduled_task,
     get_task_statistics,
 )
+from core.response.deep_quarantine import (
+    analyze_deep,
+    remove_deep,
+    list_deep_backups,
+)
 from middleware.rate_limiter import limiter, WRITE_LIMIT, READ_LIMIT
 
 router = APIRouter(prefix="/api/remediation", tags=["remediation"])
@@ -648,6 +653,89 @@ async def complete_malware_removal(request: Request):
         "message": "Complete removal will be implemented in Phase 3.3",
         "actions": [],
     }
+
+
+# ===== DEEP QUARANTINE ENDPOINTS =====
+
+@router.post("/deep-quarantine/analyze")
+@limiter.limit(WRITE_LIMIT)
+async def analyze_deep_quarantine(request: Request, data: dict):
+    """
+    Perform deep analysis on a target file/directory
+    
+    Args:
+        file_path: Path to analyze
+    
+    Returns:
+        Comprehensive analysis results
+    """
+    try:
+        file_path = data.get("file_path")
+        if not file_path:
+            raise HTTPException(status_code=400, detail="file_path is required")
+        
+        analysis = analyze_deep(file_path)
+        
+        return analysis
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
+
+
+@router.post("/deep-quarantine/remove")
+@limiter.limit(WRITE_LIMIT)
+async def remove_deep_quarantine(request: Request, data: dict):
+    """
+    Perform complete removal based on analysis
+    
+    Args:
+        analysis_id: Analysis identifier
+        analysis_data: Full analysis results
+    
+    Returns:
+        Success status and backup file path
+    """
+    try:
+        analysis_id = data.get("analysis_id")
+        analysis_data = data.get("analysis_data")
+        
+        if not analysis_id or not analysis_data:
+            raise HTTPException(status_code=400, detail="analysis_id and analysis_data are required")
+        
+        success, result = remove_deep(analysis_id, analysis_data)
+        
+        if success:
+            return {
+                "success": True,
+                "message": "Complete removal successful",
+                "backup_file": result,
+            }
+        else:
+            return {
+                "success": False,
+                "message": result,
+                "backup_file": None,
+            }
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Removal failed: {str(e)}")
+
+
+@router.get("/deep-quarantine/backups")
+@limiter.limit(READ_LIMIT)
+async def list_deep_quarantine_backups(request: Request):
+    """
+    List all deep quarantine backup files
+    
+    Returns:
+        List of backup files with metadata
+    """
+    try:
+        backups = list_deep_backups()
+        return {"backups": backups}
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list backups: {str(e)}")
 
 
 # ===== HEALTH CHECK =====
