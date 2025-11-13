@@ -1,0 +1,21 @@
+{
+  "config_version": "1.0",
+  "exported_at": "2025-11-13T14:10:24.301702",
+  "cyberguardian_version": "1.4.0",
+  "sections": {
+    "protection": {
+      "enabled": false,
+      "watch_paths": [],
+      "auto_quarantine": false,
+      "threat_threshold": 80
+    },
+    "exclusions": [],
+    "scan_schedules": [],
+    "update_settings": {
+      "auto_check": true,
+      "auto_download": false,
+      "auto_install": false,
+      "update_channel": "stable"
+    }
+  }
+}

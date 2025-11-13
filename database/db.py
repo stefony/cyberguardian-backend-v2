@@ -520,6 +520,38 @@ def init_database():
             resolved_at DATETIME
         )
     """)
+    # ============================================
+    # UPDATE HISTORY TABLE
+    # ============================================
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS update_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            from_version TEXT NOT NULL,
+            to_version TEXT NOT NULL,
+            update_type TEXT,
+            status TEXT NOT NULL,
+            started_at TEXT NOT NULL DEFAULT (datetime('now')),
+            completed_at TEXT,
+            duration_seconds INTEGER,
+            error_message TEXT,
+            rollback_performed INTEGER DEFAULT 0,
+            backup_path TEXT,
+            download_size_bytes INTEGER,
+            release_notes TEXT
+        )
+    """)
+    
+    # Indexes for update history
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_update_history_status 
+        ON update_history(status)
+    """)
+    
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_update_history_versions 
+        ON update_history(to_version, from_version)
+    """)
     
     conn.commit()
     conn.close()
@@ -2903,5 +2935,430 @@ def delete_old_integrity_logs(days: int = 30):
     
     return deleted_count
     
+# ============================================================================
+# UPDATE HISTORY
+# ============================================================================
+
+def create_update_history_table():
+    """Create update history table"""
+    query = """
+    CREATE TABLE IF NOT EXISTS update_history (
+        id SERIAL PRIMARY KEY,
+        from_version VARCHAR(50) NOT NULL,
+        to_version VARCHAR(50) NOT NULL,
+        update_type VARCHAR(20),
+        status VARCHAR(50) NOT NULL,
+        started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        completed_at TIMESTAMP,
+        duration_seconds INTEGER,
+        error_message TEXT,
+        rollback_performed BOOLEAN DEFAULT FALSE,
+        backup_path TEXT,
+        download_size_bytes BIGINT,
+        release_notes TEXT
+    );
+    
+    CREATE INDEX IF NOT EXISTS idx_update_history_status 
+    ON update_history(status);
+    
+    CREATE INDEX IF NOT EXISTS idx_update_history_versions 
+    ON update_history(to_version, from_version);
+    """
+    execute_query(query)
+    logger.info("✅ Update history table created")
+
+
+def log_update_attempt(
+    from_version: str,
+    to_version: str,
+    update_type: str,
+    download_size: Optional[int] = None,
+    release_notes: Optional[str] = None
+) -> int:
+    """
+    Log update attempt
+    
+    Args:
+        from_version: Current version
+        to_version: Target version
+        update_type: Type of update (major/minor/patch)
+        download_size: Download size in bytes
+        release_notes: Release notes
+        
+    Returns:
+        Update history ID
+    """
+    query = """
+    INSERT INTO update_history (
+        from_version, to_version, update_type, status,
+        download_size_bytes, release_notes
+    )
+    VALUES (%s, %s, %s, 'in_progress', %s, %s)
+    RETURNING id;
+    """
+    
+    result = execute_query(
+        query,
+        (from_version, to_version, update_type, download_size, release_notes),
+        fetch=True
+    )
+    
+    if result:
+        update_id = result[0][0]
+        logger.info(f"✅ Update attempt logged: ID {update_id}")
+        return update_id
+    
+    return 0
+
+
+def update_history_status(
+    update_id: int,
+    status: str,
+    error_message: Optional[str] = None,
+    rollback_performed: bool = False,
+    backup_path: Optional[str] = None
+):
+    """
+    Update history entry status
+    
+    Args:
+        update_id: Update history ID
+        status: New status (completed/failed/rolled_back)
+        error_message: Error message if failed
+        rollback_performed: Whether rollback was performed
+        backup_path: Path to backup
+    """
+    query = """
+    UPDATE update_history
+    SET status = %s,
+        completed_at = CURRENT_TIMESTAMP,
+        duration_seconds = EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - started_at))::INTEGER,
+        error_message = %s,
+        rollback_performed = %s,
+        backup_path = %s
+    WHERE id = %s;
+    """
+    
+    execute_query(query, (status, error_message, rollback_performed, backup_path, update_id))
+    logger.info(f"✅ Update history updated: ID {update_id} - {status}")
+
+
+def get_update_history(limit: int = 50) -> List[Dict[str, Any]]:
+    """
+    Get update history
+    
+    Args:
+        limit: Maximum number of records
+        
+    Returns:
+        List of update history records
+    """
+    query = """
+    SELECT 
+        id,
+        from_version,
+        to_version,
+        update_type,
+        status,
+        started_at,
+        completed_at,
+        duration_seconds,
+        error_message,
+        rollback_performed,
+        backup_path,
+        download_size_bytes,
+        release_notes
+    FROM update_history
+    ORDER BY started_at DESC
+    LIMIT %s;
+    """
+    
+    results = execute_query(query, (limit,), fetch=True)
+    
+    if not results:
+        return []
+    
+    updates = []
+    for row in results:
+        updates.append({
+            "id": row[0],
+            "from_version": row[1],
+            "to_version": row[2],
+            "update_type": row[3],
+            "status": row[4],
+            "started_at": row[5].isoformat() if row[5] else None,
+            "completed_at": row[6].isoformat() if row[6] else None,
+            "duration_seconds": row[7],
+            "error_message": row[8],
+            "rollback_performed": row[9],
+            "backup_path": row[10],
+            "download_size_bytes": row[11],
+            "release_notes": row[12]
+        })
+    
+    return updates
+
+
+def get_last_successful_update() -> Optional[Dict[str, Any]]:
+    """
+    Get last successful update
+    
+    Returns:
+        Last successful update record
+    """
+    query = """
+    SELECT 
+        id, from_version, to_version, update_type,
+        completed_at, duration_seconds
+    FROM update_history
+    WHERE status = 'completed'
+    ORDER BY completed_at DESC
+    LIMIT 1;
+    """
+    
+    results = execute_query(query, fetch=True)
+    
+    if not results or not results[0]:
+        return None
+    
+    row = results[0]
+    return {
+        "id": row[0],
+        "from_version": row[1],
+        "to_version": row[2],
+        "update_type": row[3],
+        "completed_at": row[4].isoformat() if row[4] else None,
+        "duration_seconds": row[5]
+    }
+    
+    # ============================================================================
+# UPDATE HISTORY FUNCTIONS
+# ============================================================================
+
+def log_update_attempt(
+    from_version: str,
+    to_version: str,
+    update_type: str,
+    download_size: Optional[int] = None,
+    release_notes: Optional[str] = None
+) -> int:
+    """
+    Log update attempt
+    
+    Args:
+        from_version: Current version
+        to_version: Target version
+        update_type: Type of update (major/minor/patch)
+        download_size: Download size in bytes
+        release_notes: Release notes
+        
+    Returns:
+        Update history ID
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    now = datetime.now().isoformat()
+    
+    cursor.execute("""
+        INSERT INTO update_history (
+            from_version, to_version, update_type, status,
+            started_at, download_size_bytes, release_notes
+        )
+        VALUES (?, ?, ?, 'in_progress', ?, ?, ?)
+    """, (from_version, to_version, update_type, now, download_size, release_notes))
+    
+    update_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    
+    logger.info(f"✅ Update attempt logged: ID {update_id}")
+    return update_id
+
+
+def update_history_status(
+    update_id: int,
+    status: str,
+    error_message: Optional[str] = None,
+    rollback_performed: bool = False,
+    backup_path: Optional[str] = None
+):
+    """
+    Update history entry status
+    
+    Args:
+        update_id: Update history ID
+        status: New status (completed/failed/rolled_back)
+        error_message: Error message if failed
+        rollback_performed: Whether rollback was performed
+        backup_path: Path to backup
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    now = datetime.now().isoformat()
+    
+    # Calculate duration
+    cursor.execute("SELECT started_at FROM update_history WHERE id = ?", (update_id,))
+    row = cursor.fetchone()
+    
+    duration_seconds = None
+    if row:
+        started_at = datetime.fromisoformat(row[0])
+        duration_seconds = int((datetime.now() - started_at).total_seconds())
+    
+    cursor.execute("""
+        UPDATE update_history
+        SET status = ?,
+            completed_at = ?,
+            duration_seconds = ?,
+            error_message = ?,
+            rollback_performed = ?,
+            backup_path = ?
+        WHERE id = ?
+    """, (status, now, duration_seconds, error_message, int(rollback_performed), backup_path, update_id))
+    
+    conn.commit()
+    conn.close()
+    
+    logger.info(f"✅ Update history updated: ID {update_id} - {status}")
+
+
+def get_update_history(limit: int = 50) -> List[Dict[str, Any]]:
+    """
+    Get update history
+    
+    Args:
+        limit: Maximum number of records
+        
+    Returns:
+        List of update history records
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT 
+            id, from_version, to_version, update_type, status,
+            started_at, completed_at, duration_seconds,
+            error_message, rollback_performed, backup_path,
+            download_size_bytes, release_notes
+        FROM update_history
+        ORDER BY started_at DESC
+        LIMIT ?
+    """, (limit,))
+    
+    rows = cursor.fetchall()
+    conn.close()
+    
+    updates = []
+    for row in rows:
+        updates.append({
+            "id": row[0],
+            "from_version": row[1],
+            "to_version": row[2],
+            "update_type": row[3],
+            "status": row[4],
+            "started_at": row[5],
+            "completed_at": row[6],
+            "duration_seconds": row[7],
+            "error_message": row[8],
+            "rollback_performed": bool(row[9]),
+            "backup_path": row[10],
+            "download_size_bytes": row[11],
+            "release_notes": row[12]
+        })
+    
+    return updates
+
+
+def get_last_successful_update() -> Optional[Dict[str, Any]]:
+    """
+    Get last successful update
+    
+    Returns:
+        Last successful update record
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT 
+            id, from_version, to_version, update_type,
+            completed_at, duration_seconds
+        FROM update_history
+        WHERE status = 'completed'
+        ORDER BY completed_at DESC
+        LIMIT 1
+    """)
+    
+    row = cursor.fetchone()
+    conn.close()
+    
+    if not row:
+        return None
+    
+    return {
+        "id": row[0],
+        "from_version": row[1],
+        "to_version": row[2],
+        "update_type": row[3],
+        "completed_at": row[4],
+        "duration_seconds": row[5]
+    }
+
+
+def get_update_statistics() -> Dict[str, Any]:
+    """
+    Get update statistics
+    
+    Returns:
+        Statistics dictionary
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    # Total updates
+    cursor.execute("SELECT COUNT(*) FROM update_history")
+    total = cursor.fetchone()[0]
+    
+    # Successful updates
+    cursor.execute("SELECT COUNT(*) FROM update_history WHERE status = 'completed'")
+    successful = cursor.fetchone()[0]
+    
+    # Failed updates
+    cursor.execute("SELECT COUNT(*) FROM update_history WHERE status = 'failed'")
+    failed = cursor.fetchone()[0]
+    
+    # Rollbacks
+    cursor.execute("SELECT COUNT(*) FROM update_history WHERE rollback_performed = 1")
+    rollbacks = cursor.fetchone()[0]
+    
+    # Last update
+    cursor.execute("""
+        SELECT to_version, completed_at 
+        FROM update_history 
+        WHERE status = 'completed' 
+        ORDER BY completed_at DESC 
+        LIMIT 1
+    """)
+    last_update_row = cursor.fetchone()
+    
+    last_update = None
+    if last_update_row:
+        last_update = {
+            "version": last_update_row[0],
+            "date": last_update_row[1]
+        }
+    
+    conn.close()
+    
+    return {
+        "total_updates": total,
+        "successful_updates": successful,
+        "failed_updates": failed,
+        "rollbacks": rollbacks,
+        "last_update": last_update
+    }
 # Initialize database on module import
 init_database()
