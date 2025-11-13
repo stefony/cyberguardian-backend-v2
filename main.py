@@ -31,6 +31,7 @@ from api.remediation import router as remediation_router
 from api import mitre
 from api.integrity import router as integrity_router
 from api.watchdog import router as watchdog_router
+from api.process_protection import router as process_protection_router
 
 # ============================================
 # Logging (set up BEFORE app creation)
@@ -157,6 +158,7 @@ app.include_router(mitre.router, prefix="/api/mitre", tags=["MITRE ATT&CK"])
 app.include_router(remediation_router, tags=["Remediation"])
 app.include_router(integrity_router)
 app.include_router(watchdog_router)
+app.include_router(process_protection_router) 
 
 # ============================================
 # Root
