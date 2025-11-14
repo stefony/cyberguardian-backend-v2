@@ -84,7 +84,7 @@ class UserPasswordChange(BaseModel):
 async def list_users(
     request: Request,
     org_id: Optional[str] = None,
-    _: bool = Depends(RequireUsersRead)
+    _: bool = RequireUsersRead
 ):
     """
     List all users in organization
@@ -146,7 +146,7 @@ async def list_users(
 async def get_user_details(
     user_id: str,
     request: Request,
-    _: bool = Depends(RequireUsersRead)
+    _: bool = RequireUsersRead
 ):
     """
     Get user details
@@ -192,7 +192,7 @@ async def get_user_details(
 async def create_user(
     user_data: UserCreate,
     request: Request,
-    _: bool = Depends(RequireUsersWrite)
+    _: bool = RequireUsersWrite
 ):
     """
     Create new user in organization
@@ -272,7 +272,7 @@ async def update_user(
     user_id: str,
     user_data: UserUpdate,
     request: Request,
-    _: bool = Depends(RequireUsersWrite)
+    _: bool = RequireUsersWrite
 ):
     """
     Update user details
@@ -354,7 +354,7 @@ async def update_user(
 async def delete_user(
     user_id: str,
     request: Request,
-    _: bool = Depends(RequireUsersDelete)
+    _: bool = RequireUsersDelete
 ):
     """
     Delete user (soft delete)
@@ -409,7 +409,7 @@ async def update_user_role(
     user_id: str,
     role_data: UserRoleUpdate,
     request: Request,
-    _: bool = Depends(RequireAdmin)
+    _: bool = RequireAdmin
 ):
     """
     Update user's role in current organization
@@ -458,7 +458,7 @@ async def update_user_role(
 async def get_user_role_info(
     user_id: str,
     request: Request,
-    _: bool = Depends(RequireUsersRead)
+    _: bool = RequireUsersRead
 ):
     """
     Get user's role in current organization
@@ -497,7 +497,7 @@ async def get_user_role_info(
 async def invite_user(
     invite_data: UserInvite,
     request: Request,
-    _: bool = Depends(RequireUsersInvite)
+    _: bool = RequireUsersInvite
 ):
     """
     Invite user to organization
@@ -582,7 +582,7 @@ async def invite_user(
 @router.get("/invites/pending")
 async def list_pending_invites(
     request: Request,
-    _: bool = Depends(RequireUsersRead)
+    _: bool = RequireUsersRead
 ):
     """
     List pending invitations for organization
@@ -633,7 +633,7 @@ async def list_pending_invites(
 async def cancel_invite(
     invite_id: int,
     request: Request,
-    _: bool = Depends(RequireAdmin)
+    _: bool = RequireAdmin
 ):
     """
     Cancel pending invitation

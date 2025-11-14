@@ -175,7 +175,7 @@ async def list_user_organizations(request: Request):
 async def get_organization_details(
     org_id: str,
     request: Request,
-    _: bool = Depends(RequireOrganizationsRead)
+    _: bool = RequireOrganizationsRead  # ✅ FIXED: No Depends() wrapper
 ):
     """
     Get organization details
@@ -212,7 +212,7 @@ async def update_organization(
     org_id: str,
     org_data: OrganizationUpdate,
     request: Request,
-    _: bool = Depends(RequireOrganizationsWrite)
+    _: bool = RequireOrganizationsWrite
 ):
     """
     Update organization details
@@ -314,7 +314,7 @@ async def update_organization(
 async def delete_organization(
     org_id: str,
     request: Request,
-    _: bool = Depends(RequireAdmin)
+    _: bool = RequireAdmin
 ):
     """
     Delete organization (soft delete)
@@ -362,7 +362,7 @@ async def delete_organization(
 async def list_organization_members(
     org_id: str,
     request: Request,
-    _: bool = Depends(RequireOrganizationsRead)
+    _: bool = RequireOrganizationsRead
 ):
     """
     List all members in organization
@@ -410,7 +410,7 @@ async def update_member_role(
     user_id: str,
     member_data: OrganizationMemberUpdate,
     request: Request,
-    _: bool = Depends(RequireAdmin)
+    _: bool = RequireAdmin
 ):
     """
     Update member's role in organization
@@ -449,7 +449,7 @@ async def remove_member(
     org_id: str,
     user_id: str,
     request: Request,
-    _: bool = Depends(RequireAdmin)
+    _: bool = RequireAdmin
 ):
     """
     Remove member from organization
@@ -516,7 +516,7 @@ async def remove_member(
 async def get_organization_settings(
     org_id: str,
     request: Request,
-    _: bool = Depends(RequireOrganizationsRead)
+    _: bool = RequireOrganizationsRead
 ):
     """
     Get organization settings
@@ -545,7 +545,7 @@ async def update_organization_settings(
     org_id: str,
     settings_data: OrganizationSettings,
     request: Request,
-    _: bool = Depends(RequireOrganizationsWrite)
+    _: bool = RequireOrganizationsWrite
 ):
     """
     Update organization settings
@@ -591,7 +591,7 @@ async def update_organization_settings(
 async def get_organization_stats(
     org_id: str,
     request: Request,
-    _: bool = Depends(RequireOrganizationsRead)
+    _: bool = RequireOrganizationsRead
 ):
     """
     Get organization statistics
