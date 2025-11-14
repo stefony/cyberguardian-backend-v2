@@ -35,6 +35,7 @@ from api.process_protection import router as process_protection_router
 from api.updates import router as updates_router
 from api.configuration import router as configuration_router
 from api.performance import router as performance_router
+
 # ✨ PHASE 7: Enterprise Features
 from api.organizations import router as organizations_router
 from api.roles import router as roles_router
@@ -50,13 +51,13 @@ from middleware.logging_middleware import LoggingMiddleware
 from middleware.rate_limiter import limiter, rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
+# Tenant / organization context
+from middleware.tenant_context import tenant_context_middleware
+
 # Initialize admin user on startup
 from database.init_admin import init_admin_user
 
 from core.scheduler import start_scheduler, stop_scheduler
-
-# ✨ Tenant / multi-tenant middleware
-from middleware.tenant_context import tenant_context_middleware
 
 # ============================================
 # Setup Logging (BEFORE app creation)
@@ -109,7 +110,7 @@ async def lifespan(app: FastAPI):
         from core.performance_monitor import get_performance_monitor
         monitor = get_performance_monitor()
         monitor.stop_monitoring()
-    except:
+    except Exception:
         pass
 
     app_logger.info("👋 Shutting down...")
@@ -126,24 +127,23 @@ app = FastAPI(
 
 # ============================================
 # CORS MUST BE FIRST (before any other middleware)
-# Expanded (Dev + Prod + Preview + Future clients)
 # ============================================
 ALLOWED_ORIGINS = [
     # Local dev
     "http://localhost:3000",
     "http://localhost:3001",
     "http://localhost:8000",
-
     # Production / Preview Frontends
     "https://cyberguardian-dashboard.vercel.app",
     "https://cyberguardian-dashboard-git-main-stefonys-projects.vercel.app",
     "https://cyberguardian-dashboard-novx7ny4q-stefonys-projects.vercel.app",
+    # custom domains => add here later
 ]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_origin_regex=r"https://.*\.vercel\.app",  # ✅ Covers all Vercel domains
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -154,8 +154,8 @@ app.add_middleware(
 # ============================================
 app.add_middleware(LoggingMiddleware)
 
-# ✨ Tenant / organization context (multi-tenant)
-# ВАЖНО: това е http-middleware, за да попълва request.state.organization_id, role, permissions
+# Tenant context (multi-tenant & RBAC)
+# Това middleware ще зарежда organization_id, role и permissions
 app.middleware("http")(tenant_context_middleware)
 
 # Rate Limiting
@@ -199,10 +199,10 @@ app.include_router(configuration_router)
 app.include_router(performance_router, tags=["Performance"])
 
 # ✨ PHASE 7: Enterprise Features
-# В router-ите вече има prefix=/api/..., тук само добавяме tags
 app.include_router(organizations_router, tags=["Organizations"])  # /api/organizations
 app.include_router(roles_router, tags=["Roles"])                  # /api/roles
 app.include_router(users_enterprise_router, tags=["Users"])       # /api/users
+
 
 # ============================================
 # Root
@@ -212,7 +212,7 @@ async def root():
     """Root endpoint - API info"""
     return {
         "message": "CyberGuardian AI API",
-        "version": "1.5.0",  # ✨ Updated for Phase 7
+        "version": "1.5.0",
         "status": "✅ Enterprise-Ready with Multi-tenant & RBAC",
         "docs": "/docs",
         "health": "/api/health",
@@ -237,7 +237,6 @@ async def root():
     }
 
 
-# Run with: uvicorn main:app --reload --host 0.0.0.0 --port 8000
 if __name__ == "__main__":
     import uvicorn
 

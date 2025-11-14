@@ -5,7 +5,6 @@ PHASE 7: Enterprise Features
 API endpoints for managing organizations (multi-tenant companies).
 Handles organization CRUD, members, settings, and invitations.
 """
-
 from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
@@ -72,7 +71,10 @@ class OrganizationSettings(BaseModel):
 
 
 class OrganizationInvite(BaseModel):
-    email: str = Field(..., pattern=r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
+    email: str = Field(
+        ...,
+        pattern=r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$",
+    )
     role: str = Field(..., pattern="^(admin|manager|analyst|viewer)$")
 
 
@@ -166,6 +168,9 @@ async def list_user_organizations(request: Request):
             "organizations": organizations,
         }
 
+    except HTTPException:
+        # да върнем реалния 401/403, а не 500
+        raise
     except Exception as e:
         logger.error(f"Error listing organizations: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -230,7 +235,7 @@ async def update_organization(
 
         # Build update query
         updates = []
-        params = []
+        params: list[Any] = []
 
         if org_data.name is not None:
             updates.append("name = ?")
@@ -628,10 +633,8 @@ async def get_organization_stats(
         )
         member_count = cursor.fetchone()[0]
 
-        # Get scan count (if scans table has org_id)
+        # For now, mock scans / threats
         scan_count = 0
-
-        # Get threat count
         threat_count = 0
 
         conn.close()

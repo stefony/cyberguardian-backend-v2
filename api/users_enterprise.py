@@ -1,14 +1,3 @@
-"""
-CyberGuardian AI - Enhanced Users API
-PHASE 7: Enterprise Features
-
-Enhanced user management with:
-- Multi-tenant organization support
-- Role-based access control
-- User invitations
-- Organization membership
-"""
-
 from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional, Dict, Any
@@ -124,7 +113,7 @@ async def list_users(
         rows = cursor.fetchall()
         conn.close()
 
-        users = []
+        users: list[dict[str, Any]] = []
         for row in rows:
             user = dict(row)
             # Don't include password hash
@@ -299,7 +288,7 @@ async def update_user(
 
         # Build update query
         updates = []
-        params = []
+        params: list[Any] = []
 
         if user_data.username is not None:
             # Check if new username is unique
@@ -490,8 +479,7 @@ async def get_user_role_info(
 
         if not role:
             raise HTTPException(
-                status_code=404,
-                detail="User role not found in this organization",
+                status_code=404, detail="User role not found in this organization"
             )
 
         return {
@@ -810,3 +798,4 @@ async def change_my_password(
     except Exception as e:
         logger.error(f"Error changing password: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
