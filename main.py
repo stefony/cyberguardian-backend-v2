@@ -1,3 +1,4 @@
+# main.py
 """
 CyberGuardian AI - FastAPI Backend
 Main application entry point with Rate Limiting & Robust CORS
@@ -25,7 +26,7 @@ from api.google_oauth import router as google_oauth_router
 from api.scans import router as scans_router
 from api.quarantine import router as quarantine_router
 from api.exclusions import router as exclusions_router
-from api.signatures import router as signatures_router
+from api.signatures import router as signatures_router  
 from api.threat_intel import router as threat_intel_router
 from api.remediation import router as remediation_router
 from api import mitre
@@ -35,7 +36,6 @@ from api.process_protection import router as process_protection_router
 from api.updates import router as updates_router
 from api.configuration import router as configuration_router
 from api.performance import router as performance_router
-
 # ✨ PHASE 7: Enterprise Features
 from api.organizations import router as organizations_router
 from api.roles import router as roles_router
@@ -51,9 +51,6 @@ from middleware.logging_middleware import LoggingMiddleware
 from middleware.rate_limiter import limiter, rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-# Tenant / organization context
-from middleware.tenant_context import tenant_context_middleware
-
 # Initialize admin user on startup
 from database.init_admin import init_admin_user
 
@@ -65,6 +62,7 @@ from core.scheduler import start_scheduler, stop_scheduler
 logger = setup_logging(level="INFO")
 app_logger = get_logger(__name__)
 
+from contextlib import asynccontextmanager
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -78,11 +76,11 @@ async def lifespan(app: FastAPI):
     print("   ✍️  Write: 30 req/min")
     print("   🔥 Threat Intel: 60 req/min")
     init_admin_user()
-
+    
     # Start background scheduler
     start_scheduler()
     print("⏰ Automated Intelligence Updates: ENABLED (every 6 hours)")
-
+    
     # ✨ Start performance monitoring
     try:
         from core.performance_monitor import get_performance_monitor
@@ -91,7 +89,7 @@ async def lifespan(app: FastAPI):
         print("📊 Performance Monitoring: ENABLED (5s interval)")
     except Exception as e:
         print(f"⚠️  Performance monitoring failed to start: {e}")
-
+    
     # ✨ Initialize enterprise database
     try:
         from database.schema_enterprise import init_enterprise_tables
@@ -99,79 +97,50 @@ async def lifespan(app: FastAPI):
         print("🏢 Enterprise Features: ENABLED (Multi-tenant & RBAC)")
     except Exception as e:
         print(f"⚠️  Enterprise initialization failed: {e}")
-
+    
     yield
-
+    
     # Shutdown
     stop_scheduler()
-
+    
     # ✨ Stop performance monitoring
     try:
         from core.performance_monitor import get_performance_monitor
         monitor = get_performance_monitor()
         monitor.stop_monitoring()
-    except Exception:
+    except:
         pass
-
+    
     app_logger.info("👋 Shutting down...")
     print("👋 Shutting down...")
-
 
 # Initialize FastAPI app
 app = FastAPI(
     title="CyberGuardian AI",
     description="Advanced AI-Powered Cybersecurity Platform with Enterprise Features",
     version="1.5.0",  # ✨ Updated version for Phase 7
-    lifespan=lifespan,
+    lifespan=lifespan
 )
 
 # ============================================
-# CORS MUST BE FIRST (before any other middleware)
+# CORS - FIXED: Allow all origins
 # ============================================
-ALLOWED_ORIGINS = [
-    # Local dev
-    "http://localhost:3000",
-    "http://localhost:3001",
-    "http://localhost:8000",
-    # Production / Preview Frontends
-    "https://cyberguardian-dashboard.vercel.app",
-    "https://cyberguardian-dashboard-git-main-stefonys-projects.vercel.app",
-    "https://cyberguardian-dashboard-novx7ny4q-stefonys-projects.vercel.app",
-    # custom domains => add here later
-]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_origins=["*"],  # Allow all origins (for debugging CORS issues)
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ============================================
-# Other middlewares (AFTER CORS)
-# ============================================
+# Other middleware
 app.add_middleware(LoggingMiddleware)
-
-# Tenant context (multi-tenant & RBAC)
-# Това middleware ще зарежда organization_id, role и permissions
-app.middleware("http")(tenant_context_middleware)
-
-# Rate Limiting
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
-# ============================================
 # Routers
-# ============================================
-# Health check - NO rate limit
 app.include_router(health_router, prefix="/api", tags=["Health"])
-
-# Authentication - STRICT rate limit (applied in auth.py router)
 app.include_router(auth_router, prefix="/api", tags=["Authentication"])
-
-# Feature routers
 app.include_router(threats_router, prefix="/api", tags=["Threats"])
 app.include_router(detection_router, prefix="/api", tags=["Detection"])
 app.include_router(deception_router, prefix="/api", tags=["Deception"])
@@ -193,7 +162,7 @@ app.include_router(mitre.router, prefix="/api/mitre", tags=["MITRE ATT&CK"])
 app.include_router(remediation_router, tags=["Remediation"])
 app.include_router(integrity_router)
 app.include_router(watchdog_router)
-app.include_router(process_protection_router)
+app.include_router(process_protection_router) 
 app.include_router(updates_router)
 app.include_router(configuration_router)
 app.include_router(performance_router, tags=["Performance"])
@@ -203,13 +172,8 @@ app.include_router(organizations_router, tags=["Organizations"])  # /api/organiz
 app.include_router(roles_router, tags=["Roles"])                  # /api/roles
 app.include_router(users_enterprise_router, tags=["Users"])       # /api/users
 
-
-# ============================================
-# Root
-# ============================================
 @app.get("/")
 async def root():
-    """Root endpoint - API info"""
     return {
         "message": "CyberGuardian AI API",
         "version": "1.5.0",
@@ -229,21 +193,18 @@ async def root():
         "threat_intel": "/api/threat-intel",
         "remediation": "/api/remediation",
         "performance": "/api/performance",
-        # ✨ PHASE 7: Enterprise endpoints
         "organizations": "/api/organizations",
         "roles": "/api/roles",
         "users": "/api/users",
-        "ws": "/ws",
+        "ws": "/ws"
     }
-
 
 if __name__ == "__main__":
     import uvicorn
-
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
         port=8000,
         reload=True,
-        log_level="info",
+        log_level="info"
     )
