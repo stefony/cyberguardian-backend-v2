@@ -79,20 +79,30 @@ async def extract_tenant_from_request(request: Request) -> Optional[str]:
     Can come from:
     1. Header: X-Organization-ID
     2. Query param: org_id
-    3. User's default organization
+    3. User's default organization (first org from DB)
     """
-    # Try header first
+    # 1) Header
     org_id = request.headers.get("X-Organization-ID")
     if org_id:
         return org_id
     
-    # Try query param
+    # 2) Query param
     org_id = request.query_params.get("org_id")
     if org_id:
         return org_id
     
-    # TODO: Get user's default organization from database
-    # For now, return None (will use user's first organization)
+    # 3) Fallback: първата организация на потребителя
+    user_id = getattr(request.state, "user_id", None)
+    if user_id:
+        try:
+            from database.schema_enterprise import get_user_organizations
+            orgs = get_user_organizations(user_id)
+            if orgs:
+                return orgs[0]["id"]
+        except Exception as e:
+            logger.error(f"Error getting default organization for user {user_id}: {e}")
+    
+    # Няма организация
     return None
 
 
@@ -110,7 +120,6 @@ async def tenant_context_middleware(request: Request, call_next):
         user_id = getattr(request.state, "user_id", None)
         
         if user_id and org_id:
-            # Get user's role in this organization
             from database.schema_enterprise import get_user_role
             
             role_info = get_user_role(user_id, org_id)
@@ -130,7 +139,6 @@ async def tenant_context_middleware(request: Request, call_next):
         
         # Process request
         response = await call_next(request)
-        
         return response
         
     finally:
@@ -193,13 +201,6 @@ def get_current_permissions(request: Request) -> dict:
 def add_org_filter(query: str, table_alias: Optional[str] = None) -> str:
     """
     Add organization filter to SQL query
-    
-    Args:
-        query: SQL query
-        table_alias: Table alias (optional)
-        
-    Returns:
-        Modified query with organization filter
     """
     context = get_tenant_context()
     
@@ -218,12 +219,6 @@ def add_org_filter(query: str, table_alias: Optional[str] = None) -> str:
 def get_org_params(base_params: tuple = ()) -> tuple:
     """
     Add organization ID to query parameters
-    
-    Args:
-        base_params: Existing parameters
-        
-    Returns:
-        Parameters with organization ID added
     """
     context = get_tenant_context()
     
@@ -246,13 +241,6 @@ class TenantIsolation:
     def filter_by_org(data: list, org_field: str = "organization_id") -> list:
         """
         Filter list of items by current organization
-        
-        Args:
-            data: List of items (dicts)
-            org_field: Field name for organization ID
-            
-        Returns:
-            Filtered list
         """
         context = get_tenant_context()
         
@@ -268,12 +256,6 @@ class TenantIsolation:
     def validate_org_access(org_id: str) -> bool:
         """
         Validate that current user has access to organization
-        
-        Args:
-            org_id: Organization ID to validate
-            
-        Returns:
-            True if user has access
         """
         context = get_tenant_context()
         
@@ -286,12 +268,6 @@ class TenantIsolation:
     def get_user_organizations(user_id: str) -> list:
         """
         Get all organizations for a user
-        
-        Args:
-            user_id: User ID
-            
-        Returns:
-            List of organization IDs
         """
         from database.schema_enterprise import get_user_organizations
         
@@ -309,14 +285,6 @@ def allow_cross_tenant_access(
 ) -> bool:
     """
     Check if user can access data from another organization
-    Only super admins or users with multiple org access can do this
-    
-    Args:
-        requested_org_id: Organization ID being accessed
-        request: FastAPI request
-        
-    Returns:
-        True if access is allowed
     """
     current_org_id = get_current_organization(request)
     
@@ -340,18 +308,10 @@ def switch_organization_context(
     """
     Switch to a different organization context
     Validates user has access first
-    
-    Args:
-        request: FastAPI request
-        new_org_id: New organization ID
-        
-    Returns:
-        True if switch successful
     """
     if not allow_cross_tenant_access(new_org_id, request):
         return False
     
-    # Update context
     context = get_tenant_context()
     user_id = get_current_user_id(request)
     
@@ -368,7 +328,6 @@ def switch_organization_context(
                 permissions=role_info.get('permissions', {})
             )
             
-            # Update request state
             request.state.organization_id = new_org_id
             request.state.role = role_info.get('name')
             request.state.permissions = role_info.get('permissions', {})
@@ -385,10 +344,6 @@ def switch_organization_context(
 def log_with_tenant_context(message: str, level: str = "info"):
     """
     Log message with tenant context information
-    
-    Args:
-        message: Log message
-        level: Log level (info, warning, error)
     """
     context = get_tenant_context()
     
