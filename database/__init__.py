@@ -26,6 +26,19 @@ from .db import (
     DB_PATH
 )
 
+# ✨ Enterprise features (Phase 7)
+from .schema_enterprise import (
+    create_organization,
+    get_organization,
+    get_user_organizations,
+    assign_user_role,
+    get_user_role,
+    get_all_roles,
+    get_role_by_name,
+    user_has_permission
+)
+
+
 __all__ = [
     "get_connection",
     "init_database",
@@ -46,5 +59,14 @@ __all__ = [
     "get_honeypot_logs",
     "add_honeypot_log",
     "get_deception_stats",
-    "DB_PATH"
+    "DB_PATH",
+    # ✨ Enterprise exports
+    "create_organization",
+    "get_organization",
+    "get_user_organizations",
+    "assign_user_role",
+    "get_user_role",
+    "get_all_roles",
+    "get_role_by_name",
+    "user_has_permission"
 ]
