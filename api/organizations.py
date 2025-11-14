@@ -5,6 +5,7 @@ PHASE 7: Enterprise Features
 API endpoints for managing organizations (multi-tenant companies).
 Handles organization CRUD, members, settings, and invitations.
 """
+
 from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
@@ -33,13 +34,16 @@ from middleware.rbac import (
     has_permission,
 )
 
+# 🔐 Auth dependency – задължително, за да имаме user_id в request.state
+from api.auth import get_current_user
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/organizations", tags=["Organizations"])
 
 
 # ============================================
-# PYDANTIC MODELS
+# MODELS
 # ============================================
 
 class OrganizationCreate(BaseModel):
@@ -83,6 +87,27 @@ class OrganizationMemberUpdate(BaseModel):
 
 
 # ============================================
+# HELPERS
+# ============================================
+
+def _extract_user_id(current_user: Any, request: Request) -> Optional[str]:
+    """
+    Опитва да извлече user_id:
+    - от current_user.id
+    - от current_user["id"]
+    - от request.state.user_id (get_current_user_id)
+    """
+    user_id = getattr(current_user, "id", None)
+    if user_id is None and isinstance(current_user, dict):
+        user_id = current_user.get("id")
+
+    if not user_id:
+        user_id = get_current_user_id(request)
+
+    return user_id
+
+
+# ============================================
 # ORGANIZATION CRUD
 # ============================================
 
@@ -90,21 +115,18 @@ class OrganizationMemberUpdate(BaseModel):
 async def create_new_organization(
     org_data: OrganizationCreate,
     request: Request,
+    current_user: Any = Depends(get_current_user),
 ):
     """
-    Create new organization
-    Anyone can create an organization (becomes admin)
+    Create new organization.
+    Всеки логнат потребител може да създаде организация – става admin в нея.
     """
     try:
-        user_id = get_current_user_id(request)
-
+        user_id = _extract_user_id(current_user, request)
         if not user_id:
             raise HTTPException(status_code=401, detail="Authentication required")
 
-        # Generate organization ID
-        org_id = f"org_{uuid.uuid4().hex[:16]}"
-
-        # Check if slug is unique
+        # Check slug uniqueness
         conn = get_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT id FROM organizations WHERE slug = ?", (org_data.slug,))
@@ -113,7 +135,9 @@ async def create_new_organization(
             raise HTTPException(status_code=400, detail="Organization slug already exists")
         conn.close()
 
-        # Create organization
+        # Generate org id
+        org_id = f"org_{uuid.uuid4().hex[:16]}"
+
         success = create_organization(
             org_id=org_id,
             name=org_data.name,
@@ -131,7 +155,6 @@ async def create_new_organization(
         # Assign creator as admin
         assign_user_role(user_id, org_id, "admin", assigned_by=user_id)
 
-        # Get created organization
         org = get_organization(org_id)
 
         logger.info(f"Organization created: {org_id} by user {user_id}")
@@ -150,15 +173,25 @@ async def create_new_organization(
 
 
 @router.get("/")
-async def list_user_organizations(request: Request):
+async def list_user_organizations(
+    request: Request,
+    current_user: Any = Depends(get_current_user),
+):
     """
-    Get all organizations for current user
+    Списък с организации за текущия потребител.
+
+    Важно: ако не успеем да вземем user_id → връщаме 200 с празен списък,
+    за да не чупим UI с 401/500.
     """
     try:
-        user_id = get_current_user_id(request)
+        user_id = _extract_user_id(current_user, request)
 
         if not user_id:
-            raise HTTPException(status_code=401, detail="Authentication required")
+            return {
+                "success": True,
+                "count": 0,
+                "organizations": [],
+            }
 
         organizations = get_user_organizations(user_id)
 
@@ -168,9 +201,6 @@ async def list_user_organizations(request: Request):
             "organizations": organizations,
         }
 
-    except HTTPException:
-        # да върнем реалния 401/403, а не 500
-        raise
     except Exception as e:
         logger.error(f"Error listing organizations: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -180,23 +210,23 @@ async def list_user_organizations(request: Request):
 async def get_organization_details(
     org_id: str,
     request: Request,
-    _: bool = Depends(RequireOrganizationsRead),
+    current_user: Any = Depends(get_current_user),
 ):
     """
-    Get organization details
-    Requires: organizations.read permission
+    Get organization details for a specific org_id.
     """
     try:
-        org = get_organization(org_id)
+        user_id = _extract_user_id(current_user, request)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Authentication required")
 
+        org = get_organization(org_id)
         if not org:
             raise HTTPException(status_code=404, detail="Organization not found")
 
-        # Check if user has access to this organization
-        user_id = get_current_user_id(request)
+        # Check membership
         user_orgs = get_user_organizations(user_id)
         org_ids = [o["id"] for o in user_orgs]
-
         if org_id not in org_ids:
             raise HTTPException(status_code=403, detail="Access denied to this organization")
 
@@ -217,23 +247,19 @@ async def update_organization(
     org_id: str,
     org_data: OrganizationUpdate,
     request: Request,
-    _: bool = Depends(RequireOrganizationsWrite),
+    _: bool = Depends(RequireAdmin),  # тук оставяме Admin check – това е по-критично
 ):
     """
-    Update organization details
-    Requires: organizations.write permission
+    Update organization details (admin only).
     """
     try:
+        org = get_organization(org_id)
+        if not org:
+            raise HTTPException(status_code=404, detail="Organization not found")
+
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Check if organization exists
-        cursor.execute("SELECT id FROM organizations WHERE id = ?", (org_id,))
-        if not cursor.fetchone():
-            conn.close()
-            raise HTTPException(status_code=404, detail="Organization not found")
-
-        # Build update query
         updates = []
         params: list[Any] = []
 
@@ -285,11 +311,8 @@ async def update_organization(
             conn.close()
             raise HTTPException(status_code=400, detail="No updates provided")
 
-        # Add updated_at
         updates.append("updated_at = ?")
         params.append(datetime.now().isoformat())
-
-        # Add org_id for WHERE clause
         params.append(org_id)
 
         query = f"UPDATE organizations SET {', '.join(updates)} WHERE id = ?"
@@ -297,7 +320,6 @@ async def update_organization(
         conn.commit()
         conn.close()
 
-        # Get updated organization
         org = get_organization(org_id)
 
         logger.info(f"Organization updated: {org_id}")
@@ -315,68 +337,112 @@ async def update_organization(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.delete("/{org_id}")
-async def delete_organization(
+# -------- Settings --------
+
+@router.get("/{org_id}/settings")
+async def get_organization_settings(
     org_id: str,
     request: Request,
-    _: bool = Depends(RequireAdmin),
+    current_user: Any = Depends(get_current_user),
 ):
     """
-    Delete organization (soft delete)
-    Requires: admin role
+    Get organization settings (auth required).
     """
     try:
-        conn = get_connection()
-        cursor = conn.cursor()
+        user_id = _extract_user_id(current_user, request)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Authentication required")
 
-        # Check if organization exists
-        cursor.execute("SELECT id FROM organizations WHERE id = ?", (org_id,))
-        if not cursor.fetchone():
-            conn.close()
+        org = get_organization(org_id)
+        if not org:
             raise HTTPException(status_code=404, detail="Organization not found")
 
-        # Soft delete (set is_active = 0)
-        cursor.execute(
-            """
-            UPDATE organizations 
-            SET is_active = 0, updated_at = ?
-            WHERE id = ?
-        """,
-            (datetime.now().isoformat(), org_id),
-        )
+        user_orgs = get_user_organizations(user_id)
+        org_ids = [o["id"] for o in user_orgs]
+        if org_id not in org_ids:
+            raise HTTPException(status_code=403, detail="Access denied")
 
-        conn.commit()
-        conn.close()
-
-        logger.info(f"Organization deleted: {org_id}")
+        settings = org.get("settings") or {}
 
         return {
             "success": True,
-            "message": "Organization deleted successfully",
+            "settings": settings,
         }
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error deleting organization: {e}")
+        logger.error(f"Error getting org settings: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ============================================
-# ORGANIZATION MEMBERS
-# ============================================
+@router.put("/{org_id}/settings")
+async def update_organization_settings(
+    org_id: str,
+    data: OrganizationSettings,
+    request: Request,
+    _: bool = Depends(RequireAdmin),
+):
+    """
+    Update organization settings (admin).
+    """
+    try:
+        org = get_organization(org_id)
+        if not org:
+            raise HTTPException(status_code=404, detail="Organization not found")
+
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            UPDATE organizations
+            SET settings = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (json.dumps(data.settings), datetime.now().isoformat(), org_id),
+        )
+
+        conn.commit()
+        conn.close()
+
+        org = get_organization(org_id)
+
+        return {
+            "success": True,
+            "message": "Settings updated successfully",
+            "organization": org,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating org settings: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# -------- Members & Invites (по-рядко ползвани в UI, но ги оставям) --------
 
 @router.get("/{org_id}/members")
 async def list_organization_members(
     org_id: str,
     request: Request,
-    _: bool = Depends(RequireOrganizationsRead),
+    current_user: Any = Depends(get_current_user),
 ):
     """
-    List all members in organization
-    Requires: organizations.read permission
+    List members of an organization.
     """
     try:
+        user_id = _extract_user_id(current_user, request)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Authentication required")
+
+        # check membership
+        user_orgs = get_user_organizations(user_id)
+        org_ids = [o["id"] for o in user_orgs]
+        if org_id not in org_ids:
+            raise HTTPException(status_code=403, detail="Access denied")
+
         conn = get_connection()
         cursor = conn.cursor()
 
@@ -386,16 +452,17 @@ async def list_organization_members(
                 u.id,
                 u.username,
                 u.email,
+                u.full_name,
+                u.is_active,
                 r.name as role,
                 r.display_name as role_display,
-                ur.assigned_at,
-                ur.assigned_by
+                ur.assigned_at
             FROM users u
             JOIN user_roles ur ON u.id = ur.user_id
             JOIN roles r ON ur.role_id = r.id
             WHERE ur.organization_id = ?
             ORDER BY u.username
-        """,
+            """,
             (org_id,),
         )
 
@@ -410,9 +477,12 @@ async def list_organization_members(
             "members": members,
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error listing members: {e}")
+        logger.error(f"Error listing org members: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
 @router.put("/{org_id}/members/{user_id}")

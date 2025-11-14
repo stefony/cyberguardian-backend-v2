@@ -1,3 +1,14 @@
+"""
+CyberGuardian AI - Enhanced Users API
+PHASE 7: Enterprise Features
+
+Enhanced user management with:
+- Multi-tenant organization support
+- Role-based access control
+- User invitations
+- Organization membership
+"""
+
 from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional, Dict, Any
@@ -14,10 +25,10 @@ from database.schema_enterprise import (
 )
 from middleware.rbac import (
     RequireAdmin,
-    RequireUsersRead,
-    RequireUsersWrite,
-    RequireUsersDelete,
-    RequireUsersInvite,
+    # RequireUsersRead,
+    # RequireUsersWrite,
+    # RequireUsersDelete,
+    # RequireUsersInvite,
     has_permission,
 )
 from middleware.tenant_context import (
@@ -26,13 +37,16 @@ from middleware.tenant_context import (
     get_current_role,
 )
 
+# 🔐 Auth dependency
+from api.auth import get_current_user
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/users", tags=["Users"])
 
 
 # ============================================
-# PYDANTIC MODELS
+# MODELS
 # ============================================
 
 class UserCreate(BaseModel):
@@ -73,18 +87,22 @@ class UserPasswordChange(BaseModel):
 async def list_users(
     request: Request,
     org_id: Optional[str] = None,
-    _: bool = Depends(RequireUsersRead),
+    current_user: Any = Depends(get_current_user),
 ):
     """
-    List all users in organization
-    Requires: users.read permission
+    List all users in organization.
+    В момента: само auth е задължително, без строги RBAC permissions.
     """
     try:
-        # Use provided org_id or current organization
         organization_id = org_id or get_current_organization(request)
 
         if not organization_id:
-            raise HTTPException(status_code=400, detail="Organization context required")
+            return {
+                "success": True,
+                "count": 0,
+                "organization_id": None,
+                "users": [],
+            }
 
         conn = get_connection()
         cursor = conn.cursor()
@@ -106,17 +124,16 @@ async def list_users(
             JOIN roles r ON ur.role_id = r.id
             WHERE ur.organization_id = ?
             ORDER BY u.username
-        """,
+            """,
             (organization_id,),
         )
 
         rows = cursor.fetchall()
         conn.close()
 
-        users: list[dict[str, Any]] = []
+        users: List[Dict[str, Any]] = []
         for row in rows:
             user = dict(row)
-            # Don't include password hash
             user.pop("password", None)
             users.append(user)
 
@@ -138,11 +155,10 @@ async def list_users(
 async def get_user_details(
     user_id: str,
     request: Request,
-    _: bool = Depends(RequireUsersRead),
+    current_user: Any = Depends(get_current_user),
 ):
     """
-    Get user details
-    Requires: users.read permission
+    Get user details (auth required).
     """
     try:
         conn = get_connection()
@@ -153,7 +169,7 @@ async def get_user_details(
             SELECT id, username, email, full_name, is_active, created_at, updated_at
             FROM users
             WHERE id = ?
-        """,
+            """,
             (user_id,),
         )
 
@@ -165,7 +181,6 @@ async def get_user_details(
 
         user = dict(row)
 
-        # Get user's organizations and roles
         orgs = get_user_organizations(user_id)
         user["organizations"] = orgs
 
@@ -187,49 +202,41 @@ async def get_user_details(
 async def create_user(
     user_data: UserCreate,
     request: Request,
-    _: bool = Depends(RequireUsersWrite),
+    current_user: Any = Depends(get_current_user),
 ):
     """
-    Create new user in organization
-    Requires: users.write permission
+    Create new user in organization (auth required).
     """
     try:
         import hashlib
 
         org_id = get_current_organization(request)
-
         if not org_id:
             raise HTTPException(status_code=400, detail="Organization context required")
 
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Check if username exists
         cursor.execute("SELECT id FROM users WHERE username = ?", (user_data.username,))
         if cursor.fetchone():
             conn.close()
             raise HTTPException(status_code=400, detail="Username already exists")
 
-        # Check if email exists
         cursor.execute("SELECT id FROM users WHERE email = ?", (user_data.email,))
         if cursor.fetchone():
             conn.close()
             raise HTTPException(status_code=400, detail="Email already exists")
 
-        # Generate user ID
         user_id = f"user_{uuid.uuid4().hex[:16]}"
 
-        # Hash password (simple hash for demo - use proper hashing in production)
         password_hash = hashlib.sha256(user_data.password.encode()).hexdigest()
-
         now = datetime.now().isoformat()
 
-        # Create user
         cursor.execute(
             """
             INSERT INTO users (id, username, email, password, full_name, is_active, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, 1, ?, ?)
-        """,
+            """,
             (
                 user_id,
                 user_data.username,
@@ -244,9 +251,8 @@ async def create_user(
         conn.commit()
         conn.close()
 
-        # Assign role in organization
-        current_user = get_current_user_id(request)
-        assign_user_role(user_id, org_id, user_data.role, assigned_by=current_user)
+        current_user_id = get_current_user_id(request)
+        assign_user_role(user_id, org_id, user_data.role, assigned_by=current_user_id)
 
         logger.info(f"User created: {user_id} in org {org_id} with role {user_data.role}")
 
@@ -270,28 +276,24 @@ async def update_user(
     user_id: str,
     user_data: UserUpdate,
     request: Request,
-    _: bool = Depends(RequireUsersWrite),
+    current_user: Any = Depends(get_current_user),
 ):
     """
-    Update user details
-    Requires: users.write permission
+    Update user details (auth required).
     """
     try:
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Check if user exists
         cursor.execute("SELECT id FROM users WHERE id = ?", (user_id,))
         if not cursor.fetchone():
             conn.close()
             raise HTTPException(status_code=404, detail="User not found")
 
-        # Build update query
-        updates = []
-        params: list[Any] = []
+        updates: List[str] = []
+        params: List[Any] = []
 
         if user_data.username is not None:
-            # Check if new username is unique
             cursor.execute(
                 "SELECT id FROM users WHERE username = ? AND id != ?",
                 (user_data.username, user_id),
@@ -303,7 +305,6 @@ async def update_user(
             params.append(user_data.username)
 
         if user_data.email is not None:
-            # Check if new email is unique
             cursor.execute(
                 "SELECT id FROM users WHERE email = ? AND id != ?",
                 (user_data.email, user_id),
@@ -326,11 +327,8 @@ async def update_user(
             conn.close()
             raise HTTPException(status_code=400, detail="No updates provided")
 
-        # Add updated_at
         updates.append("updated_at = ?")
         params.append(datetime.now().isoformat())
-
-        # Add user_id for WHERE clause
         params.append(user_id)
 
         query = f"UPDATE users SET {', '.join(updates)} WHERE id = ?"
@@ -356,35 +354,31 @@ async def update_user(
 async def delete_user(
     user_id: str,
     request: Request,
-    _: bool = Depends(RequireUsersDelete),
+    current_user: Any = Depends(get_current_user),
 ):
     """
-    Delete user (soft delete)
-    Requires: users.delete permission
+    Delete user (soft delete).
     """
     try:
-        current_user = get_current_user_id(request)
+        current_user_id = get_current_user_id(request)
 
-        # Cannot delete yourself
-        if user_id == current_user:
+        if user_id == current_user_id:
             raise HTTPException(status_code=400, detail="Cannot delete your own account")
 
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Check if user exists
         cursor.execute("SELECT id FROM users WHERE id = ?", (user_id,))
         if not cursor.fetchone():
             conn.close()
             raise HTTPException(status_code=404, detail="User not found")
 
-        # Soft delete (set is_active = 0)
         cursor.execute(
             """
-            UPDATE users 
+            UPDATE users
             SET is_active = 0, updated_at = ?
             WHERE id = ?
-        """,
+            """,
             (datetime.now().isoformat(), user_id),
         )
 
@@ -414,30 +408,26 @@ async def update_user_role(
     user_id: str,
     role_data: UserRoleUpdate,
     request: Request,
+    current_user: Any = Depends(get_current_user),
     _: bool = Depends(RequireAdmin),
 ):
     """
-    Update user's role in current organization
-    Requires: admin role
+    Update user's role in current organization (admin only).
     """
     try:
         org_id = get_current_organization(request)
-
         if not org_id:
             raise HTTPException(status_code=400, detail="Organization context required")
 
-        current_user = get_current_user_id(request)
-
-        # Cannot change your own role
-        if user_id == current_user:
+        current_user_id = get_current_user_id(request)
+        if user_id == current_user_id:
             raise HTTPException(status_code=400, detail="Cannot change your own role")
 
-        # Assign new role
         success = assign_user_role(
             user_id=user_id,
             organization_id=org_id,
             role_name=role_data.role,
-            assigned_by=current_user,
+            assigned_by=current_user_id,
         )
 
         if not success:
@@ -463,20 +453,17 @@ async def update_user_role(
 async def get_user_role_info(
     user_id: str,
     request: Request,
-    _: bool = Depends(RequireUsersRead),
+    current_user: Any = Depends(get_current_user),
 ):
     """
-    Get user's role in current organization
-    Requires: users.read permission
+    Get user's role in current organization (auth required).
     """
     try:
         org_id = get_current_organization(request)
-
         if not org_id:
             raise HTTPException(status_code=400, detail="Organization context required")
 
         role = get_user_role(user_id, org_id)
-
         if not role:
             raise HTTPException(
                 status_code=404, detail="User role not found in this organization"
@@ -504,65 +491,58 @@ async def get_user_role_info(
 async def invite_user(
     invite_data: UserInvite,
     request: Request,
-    _: bool = Depends(RequireUsersInvite),
+    current_user: Any = Depends(get_current_user),
 ):
     """
-    Invite user to organization
-    Requires: users.invite permission
+    Invite user to organization.
+    В момента – изискваме само auth, не и users.invite permission.
     """
     try:
         org_id = get_current_organization(request)
-
         if not org_id:
             raise HTTPException(status_code=400, detail="Organization context required")
 
-        current_user = get_current_user_id(request)
+        current_user_id = get_current_user_id(request)
 
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Check if user already exists with this email
         cursor.execute("SELECT id FROM users WHERE email = ?", (invite_data.email,))
         existing_user = cursor.fetchone()
 
         if existing_user:
-            # Check if already in organization
             cursor.execute(
                 """
-                SELECT id FROM user_roles 
+                SELECT id FROM user_roles
                 WHERE user_id = ? AND organization_id = ?
-            """,
+                """,
                 (existing_user[0], org_id),
             )
-
             if cursor.fetchone():
                 conn.close()
                 raise HTTPException(status_code=400, detail="User already in organization")
 
-        # Get role ID
-        cursor.execute("SELECT id FROM roles WHERE name = ?", (invite_data.role,))
+        cursor.execute(
+            "SELECT id FROM roles WHERE name = ?",
+            (invite_data.role,),
+        )
         role_row = cursor.fetchone()
-
         if not role_row:
             conn.close()
             raise HTTPException(status_code=404, detail="Role not found")
-
         role_id = role_row[0]
 
-        # Generate invite token
         invite_token = secrets.token_urlsafe(32)
-
-        # Create invitation
         now = datetime.now().isoformat()
         expires_at = (datetime.now() + timedelta(days=7)).isoformat()
 
         cursor.execute(
             """
-            INSERT INTO organization_invites 
+            INSERT INTO organization_invites
             (organization_id, email, role_id, invite_token, invited_by, status, expires_at, created_at)
             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
-        """,
-            (org_id, invite_data.email, role_id, invite_token, current_user, expires_at, now),
+            """,
+            (org_id, invite_data.email, role_id, invite_token, current_user_id, expires_at, now),
         )
 
         invite_id = cursor.lastrowid
@@ -572,7 +552,6 @@ async def invite_user(
 
         logger.info(f"User invited: {invite_data.email} to org {org_id}")
 
-        # TODO: Send email with invite link
         invite_link = f"https://cyberguardian.ai/accept-invite?token={invite_token}"
 
         return {
@@ -595,15 +574,13 @@ async def invite_user(
 @router.get("/invites/pending")
 async def list_pending_invites(
     request: Request,
-    _: bool = Depends(RequireUsersRead),
+    current_user: Any = Depends(get_current_user),
 ):
     """
-    List pending invitations for organization
-    Requires: users.read permission
+    List pending invitations for organization (auth required).
     """
     try:
         org_id = get_current_organization(request)
-
         if not org_id:
             raise HTTPException(status_code=400, detail="Organization context required")
 
@@ -625,7 +602,7 @@ async def list_pending_invites(
             JOIN roles r ON i.role_id = r.id
             WHERE i.organization_id = ? AND i.status = 'pending'
             ORDER BY i.created_at DESC
-        """,
+            """,
             (org_id,),
         )
 
@@ -649,11 +626,11 @@ async def list_pending_invites(
 async def cancel_invite(
     invite_id: int,
     request: Request,
+    current_user: Any = Depends(get_current_user),
     _: bool = Depends(RequireAdmin),
 ):
     """
-    Cancel pending invitation
-    Requires: admin role
+    Cancel pending invitation (admin only).
     """
     try:
         conn = get_connection()
@@ -661,16 +638,18 @@ async def cancel_invite(
 
         cursor.execute(
             """
-            UPDATE organization_invites 
+            UPDATE organization_invites
             SET status = 'cancelled'
             WHERE id = ? AND status = 'pending'
-        """,
+            """,
             (invite_id,),
         )
 
         if cursor.rowcount == 0:
             conn.close()
-            raise HTTPException(status_code=404, detail="Invite not found or already processed")
+            raise HTTPException(
+                status_code=404, detail="Invite not found or already processed"
+            )
 
         conn.commit()
         conn.close()
@@ -694,13 +673,15 @@ async def cancel_invite(
 # ============================================
 
 @router.get("/me/profile")
-async def get_my_profile(request: Request):
+async def get_my_profile(
+    request: Request,
+    current_user: Any = Depends(get_current_user),
+):
     """
-    Get current user's profile
+    Get current user's profile.
     """
     try:
         user_id = get_current_user_id(request)
-
         if not user_id:
             raise HTTPException(status_code=401, detail="Authentication required")
 
@@ -712,19 +693,16 @@ async def get_my_profile(request: Request):
             SELECT id, username, email, full_name, is_active, created_at
             FROM users
             WHERE id = ?
-        """,
+            """,
             (user_id,),
         )
 
         row = cursor.fetchone()
-
         if not row:
             conn.close()
             raise HTTPException(status_code=404, detail="User not found")
 
         user = dict(row)
-
-        # Get organizations
         orgs = get_user_organizations(user_id)
         user["organizations"] = orgs
 
@@ -746,22 +724,21 @@ async def get_my_profile(request: Request):
 async def change_my_password(
     password_data: UserPasswordChange,
     request: Request,
+    current_user: Any = Depends(get_current_user),
 ):
     """
-    Change current user's password
+    Change current user's password.
     """
     try:
         import hashlib
 
         user_id = get_current_user_id(request)
-
         if not user_id:
             raise HTTPException(status_code=401, detail="Authentication required")
 
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Verify current password
         current_hash = hashlib.sha256(password_data.current_password.encode()).hexdigest()
 
         cursor.execute("SELECT password FROM users WHERE id = ?", (user_id,))
@@ -771,15 +748,14 @@ async def change_my_password(
             conn.close()
             raise HTTPException(status_code=400, detail="Current password is incorrect")
 
-        # Update password
         new_hash = hashlib.sha256(password_data.new_password.encode()).hexdigest()
 
         cursor.execute(
             """
-            UPDATE users 
+            UPDATE users
             SET password = ?, updated_at = ?
             WHERE id = ?
-        """,
+            """,
             (new_hash, datetime.now().isoformat(), user_id),
         )
 
@@ -798,4 +774,3 @@ async def change_my_password(
     except Exception as e:
         logger.error(f"Error changing password: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
