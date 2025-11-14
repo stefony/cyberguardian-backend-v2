@@ -34,6 +34,7 @@ from api.watchdog import router as watchdog_router
 from api.process_protection import router as process_protection_router
 from api.updates import router as updates_router
 from api.configuration import router as configuration_router
+from api.performance import router as performance_router  # ✨ NEW: Performance monitoring
 
 
 
@@ -75,10 +76,28 @@ async def lifespan(app: FastAPI):
     start_scheduler()
     print("⏰ Automated Intelligence Updates: ENABLED (every 6 hours)")
     
+    # ✨ Start performance monitoring
+    try:
+        from core.performance_monitor import get_performance_monitor
+        monitor = get_performance_monitor()
+        monitor.start_monitoring(interval=5.0)
+        print("📊 Performance Monitoring: ENABLED (5s interval)")
+    except Exception as e:
+        print(f"⚠️  Performance monitoring failed to start: {e}")
+    
     yield
     
     # Shutdown
     stop_scheduler()
+    
+    # ✨ Stop performance monitoring
+    try:
+        from core.performance_monitor import get_performance_monitor
+        monitor = get_performance_monitor()
+        monitor.stop_monitoring()
+    except:
+        pass
+    
     app_logger.info("👋 Shutting down...")
     print("👋 Shutting down...")
 
@@ -86,7 +105,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="CyberGuardian AI",
     description="Advanced AI-Powered Cybersecurity Platform with Rate Limiting",
-    version="1.0.0",
+    version="1.4.0",  # ✨ Updated version
     lifespan=lifespan
 )
 
@@ -165,6 +184,7 @@ app.include_router(watchdog_router)
 app.include_router(process_protection_router) 
 app.include_router(updates_router)
 app.include_router(configuration_router)
+app.include_router(performance_router, tags=["Performance"])  # ✨ NEW: Performance API
 
 # ============================================
 # Root
@@ -174,7 +194,7 @@ async def root():
     """Root endpoint - API info"""
     return {
         "message": "CyberGuardian AI API",
-        "version": "1.0.0",
+        "version": "1.4.0",
         "status": "✅ Protected with Rate Limiting & Logging",
         "docs": "/docs",
         "health": "/api/health",
@@ -190,6 +210,7 @@ async def root():
         "signatures": "/api/signatures", 
         "threat_intel": "/api/threat-intel",
         "remediation": "/api/remediation",
+        "performance": "/api/performance",  # ✨ NEW: Performance monitoring
         "ws": "/ws"
     }
 
