@@ -215,43 +215,43 @@ class Role:
 # ============================================
 
 # Threats permissions
-RequireThreatsRead = Depends(require_permission("threats", "read"))
-RequireThreatsWrite = Depends(require_permission("threats", "write"))
-RequireThreatsDelete = Depends(require_permission("threats", "delete"))
+RequireThreatsRead = require_permission("threats", "read")
+RequireThreatsWrite = require_permission("threats", "write")
+RequireThreatsDelete = require_permission("threats", "delete")
 
 # Scans permissions
-RequireScansRead = Depends(require_permission("scans", "read"))
-RequireScansWrite = Depends(require_permission("scans", "write"))
-RequireScansDelete = Depends(require_permission("scans", "delete"))
-RequireScansExecute = Depends(require_permission("scans", "execute"))
+RequireScansRead = require_permission("scans", "read")
+RequireScansWrite = require_permission("scans", "write")
+RequireScansDelete = require_permission("scans", "delete")
+RequireScansExecute = require_permission("scans", "execute")
 
 # Users permissions
-RequireUsersRead = Depends(require_permission("users", "read"))
-RequireUsersWrite = Depends(require_permission("users", "write"))
-RequireUsersDelete = Depends(require_permission("users", "delete"))
-RequireUsersInvite = Depends(require_permission("users", "invite"))
+RequireUsersRead = require_permission("users", "read")
+RequireUsersWrite = require_permission("users", "write")
+RequireUsersDelete = require_permission("users", "delete")
+RequireUsersInvite = require_permission("users", "invite")
 
 # Settings permissions
-RequireSettingsRead = Depends(require_permission("settings", "read"))
-RequireSettingsWrite = Depends(require_permission("settings", "write"))
+RequireSettingsRead = require_permission("settings", "read")
+RequireSettingsWrite = require_permission("settings", "write")
 
 # Reports permissions
-RequireReportsRead = Depends(require_permission("reports", "read"))
-RequireReportsWrite = Depends(require_permission("reports", "write"))
-RequireReportsExport = Depends(require_permission("reports", "export"))
+RequireReportsRead = require_permission("reports", "read")
+RequireReportsWrite = require_permission("reports", "write")
+RequireReportsExport = require_permission("reports", "export")
 
 # Organizations permissions
-RequireOrganizationsRead = Depends(require_permission("organizations", "read"))
-RequireOrganizationsWrite = Depends(require_permission("organizations", "write"))
+RequireOrganizationsRead = require_permission("organizations", "read")
+RequireOrganizationsWrite = require_permission("organizations", "write")
 
 # Roles permissions
-RequireRolesRead = Depends(require_permission("roles", "read"))
-RequireRolesWrite = Depends(require_permission("roles", "write"))
+RequireRolesRead = require_permission("roles", "read")
+RequireRolesWrite = require_permission("roles", "write")
 
 # Role-based
-RequireAdmin = Depends(require_role("admin"))
-RequireManager = Depends(require_any_role(["admin", "manager"]))
-RequireAnalyst = Depends(require_any_role(["admin", "manager", "analyst"]))
+RequireAdmin = require_role("admin")
+RequireManager = require_any_role(["admin", "manager"])
+RequireAnalyst = require_any_role(["admin", "manager", "analyst"])
 
 
 # ============================================
