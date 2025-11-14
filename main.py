@@ -34,7 +34,11 @@ from api.watchdog import router as watchdog_router
 from api.process_protection import router as process_protection_router
 from api.updates import router as updates_router
 from api.configuration import router as configuration_router
-from api.performance import router as performance_router  # ✨ NEW: Performance monitoring
+from api.performance import router as performance_router
+# ✨ PHASE 7: Enterprise Features
+from api.organizations import router as organizations_router
+from api.roles import router as roles_router
+from api.users_enterprise import router as users_enterprise_router
 
 
 
@@ -85,6 +89,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"⚠️  Performance monitoring failed to start: {e}")
     
+    # ✨ Initialize enterprise database
+    try:
+        from database.schema_enterprise import init_enterprise_tables
+        init_enterprise_tables()
+        print("🏢 Enterprise Features: ENABLED (Multi-tenant & RBAC)")
+    except Exception as e:
+        print(f"⚠️  Enterprise initialization failed: {e}")
+    
     yield
     
     # Shutdown
@@ -104,8 +116,8 @@ async def lifespan(app: FastAPI):
 # Initialize FastAPI app
 app = FastAPI(
     title="CyberGuardian AI",
-    description="Advanced AI-Powered Cybersecurity Platform with Rate Limiting",
-    version="1.4.0",  # ✨ Updated version
+    description="Advanced AI-Powered Cybersecurity Platform with Enterprise Features",
+    version="1.5.0",  # ✨ Updated version for Phase 7
     lifespan=lifespan
 )
 
@@ -184,7 +196,12 @@ app.include_router(watchdog_router)
 app.include_router(process_protection_router) 
 app.include_router(updates_router)
 app.include_router(configuration_router)
-app.include_router(performance_router, tags=["Performance"])  # ✨ NEW: Performance API
+app.include_router(performance_router, tags=["Performance"])
+
+# ✨ PHASE 7: Enterprise Features
+app.include_router(organizations_router, tags=["Organizations"])  # /api/organizations
+app.include_router(roles_router, tags=["Roles"])  # /api/roles
+app.include_router(users_enterprise_router, tags=["Users"])  # /api/users
 
 # ============================================
 # Root
@@ -194,8 +211,8 @@ async def root():
     """Root endpoint - API info"""
     return {
         "message": "CyberGuardian AI API",
-        "version": "1.4.0",
-        "status": "✅ Protected with Rate Limiting & Logging",
+        "version": "1.5.0",  # ✨ Updated for Phase 7
+        "status": "✅ Enterprise-Ready with Multi-tenant & RBAC",
         "docs": "/docs",
         "health": "/api/health",
         "threats": "/api/threats",
@@ -210,7 +227,11 @@ async def root():
         "signatures": "/api/signatures", 
         "threat_intel": "/api/threat-intel",
         "remediation": "/api/remediation",
-        "performance": "/api/performance",  # ✨ NEW: Performance monitoring
+        "performance": "/api/performance",
+        # ✨ PHASE 7: Enterprise endpoints
+        "organizations": "/api/organizations",
+        "roles": "/api/roles",
+        "users": "/api/users",
         "ws": "/ws"
     }
 
