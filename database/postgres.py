@@ -40,3 +40,17 @@ def get_connection():
         conn.row_factory = sqlite3.Row
         logger.info("📁 Connected to SQLite (local)")
         return conn
+
+
+def convert_query_placeholders(query: str, params: list) -> tuple:
+    """
+    Convert SQLite ? placeholders to PostgreSQL %s placeholders
+    """
+    # If using PostgreSQL, convert ? to %s
+    if os.getenv("DATABASE_URL"):
+        # Replace all ? with %s
+        converted_query = query.replace('?', '%s')
+        return (converted_query, tuple(params))
+    else:
+        # SQLite - keep as is
+        return (query, params)

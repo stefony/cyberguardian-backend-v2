@@ -10,6 +10,7 @@ from pathlib import Path
 import json
 import logging
 import hashlib
+from database.postgres import convert_query_placeholders
 
 logger = logging.getLogger(__name__)
 
@@ -468,6 +469,9 @@ def get_honeypots(
     query += " ORDER BY created_at DESC LIMIT ?"
     params.append(limit)
     
+    # Convert placeholders for PostgreSQL
+    query, params = convert_query_placeholders(query, params)
+    
     cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
@@ -483,7 +487,11 @@ def get_honeypot_by_id(honeypot_id: int) -> Optional[Dict[str, Any]]:
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM honeypots WHERE id = ?", (honeypot_id,))
+    query = "SELECT * FROM honeypots WHERE id = ?"
+    params = [honeypot_id]
+    query, params = convert_query_placeholders(query, params)
+    
+    cursor.execute(query, params)
     row = cursor.fetchone()
     conn.close()
     
@@ -512,11 +520,15 @@ def add_honeypot(
     
     now = datetime.now().isoformat()
     
-    cursor.execute("""
+    query = """
         INSERT INTO honeypots 
         (name, type, status, ip_address, port, description, interactions, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (name, type, status, ip_address, port, description, interactions, now, now))
+    """
+    params = [name, type, status, ip_address, port, description, interactions, now, now]
+    query, params = convert_query_placeholders(query, params)
+    
+    cursor.execute(query, params)
     
     honeypot_id = cursor.lastrowid
     conn.commit()
@@ -534,11 +546,15 @@ def update_honeypot_status(honeypot_id: int, status: str) -> bool:
     
     now = datetime.now().isoformat()
     
-    cursor.execute("""
+    query = """
         UPDATE honeypots 
         SET status = ?, updated_at = ?
         WHERE id = ?
-    """, (status, now, honeypot_id))
+    """
+    params = [status, now, honeypot_id]
+    query, params = convert_query_placeholders(query, params)
+    
+    cursor.execute(query, params)
     
     success = cursor.rowcount > 0
     conn.commit()
@@ -566,6 +582,9 @@ def get_honeypot_logs(
     
     query += " ORDER BY timestamp DESC LIMIT ?"
     params.append(limit)
+    
+    # Convert placeholders for PostgreSQL
+    query, params = convert_query_placeholders(query, params)
     
     cursor.execute(query, params)
     rows = cursor.fetchall()
@@ -610,22 +629,30 @@ def add_honeypot_log(
         latitude = geo_data["latitude"]
         longitude = geo_data["longitude"]
     
-    cursor.execute("""
+    query = """
         INSERT INTO honeypot_logs 
         (honeypot_id, timestamp, source_ip, action, details, country, city, latitude, longitude)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (honeypot_id, now, source_ip, action, details_json, country, city, latitude, longitude))
+    """
+    params = [honeypot_id, now, source_ip, action, details_json, country, city, latitude, longitude]
+    query, params = convert_query_placeholders(query, params)
+    
+    cursor.execute(query, params)
     
     log_id = cursor.lastrowid
     
     # Update honeypot interactions count and last_interaction
-    cursor.execute("""
+    update_query = """
         UPDATE honeypots 
         SET interactions = interactions + 1, 
             last_interaction = ?,
             updated_at = ?
         WHERE id = ?
-    """, (now, now, honeypot_id))
+    """
+    update_params = [now, now, honeypot_id]
+    update_query, update_params = convert_query_placeholders(update_query, update_params)
+    
+    cursor.execute(update_query, update_params)
     
     conn.commit()
     conn.close()
@@ -645,11 +672,17 @@ def get_deception_stats() -> Dict[str, Any]:
     total = cursor.fetchone()["total"]
     
     # Active honeypots
-    cursor.execute("SELECT COUNT(*) as active FROM honeypots WHERE status = 'active'")
+    query = "SELECT COUNT(*) as active FROM honeypots WHERE status = ?"
+    params = ['active']
+    query, params = convert_query_placeholders(query, params)
+    cursor.execute(query, params)
     active = cursor.fetchone()["active"]
     
     # Compromised honeypots
-    cursor.execute("SELECT COUNT(*) as compromised FROM honeypots WHERE status = 'compromised'")
+    query = "SELECT COUNT(*) as compromised FROM honeypots WHERE status = ?"
+    params = ['compromised']
+    query, params = convert_query_placeholders(query, params)
+    cursor.execute(query, params)
     compromised = cursor.fetchone()["compromised"]
     
     # Total interactions
@@ -658,11 +691,14 @@ def get_deception_stats() -> Dict[str, Any]:
     
     # Interactions today
     today = datetime.now().date().isoformat()
-    cursor.execute("""
+    query = """
         SELECT COUNT(*) as today_interactions 
         FROM honeypot_logs 
         WHERE DATE(timestamp) = ?
-    """, (today,))
+    """
+    params = [today]
+    query, params = convert_query_placeholders(query, params)
+    cursor.execute(query, params)
     interactions_today = cursor.fetchone()["today_interactions"]
     
     conn.close()
@@ -675,7 +711,6 @@ def get_deception_stats() -> Dict[str, Any]:
         "interactions_today": interactions_today,
         "last_updated": datetime.now().isoformat()
     }
-
 
 # ========== USERS FUNCTIONS ==========
 
