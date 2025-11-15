@@ -9,24 +9,16 @@ Database tables for:
 - User-Organization-Role mapping
 """
 
-import sqlite3
 from datetime import datetime
 from typing import List, Dict, Any, Optional
-from pathlib import Path
 import json
 import logging
 
+# ✨ FIXED: Use centralized get_connection
+from database.db import get_connection
+from database.postgres import execute_query
+
 logger = logging.getLogger(__name__)
-
-# Database file path
-DB_PATH = Path(__file__).parent / "cyberguardian.db"
-
-
-def get_connection():
-    """Get database connection"""
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
-    return conn
 
 
 def init_enterprise_tables():
@@ -40,7 +32,7 @@ def init_enterprise_tables():
         # ============================================
         # ORGANIZATIONS TABLE (Multi-tenant)
         # ============================================
-        cursor.execute("""
+        execute_query(cursor, """
             CREATE TABLE IF NOT EXISTS organizations (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL UNIQUE,
@@ -67,7 +59,7 @@ def init_enterprise_tables():
         # ============================================
         # ROLES TABLE (RBAC)
         # ============================================
-        cursor.execute("""
+        execute_query(cursor, """
             CREATE TABLE IF NOT EXISTS roles (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE,
@@ -83,7 +75,7 @@ def init_enterprise_tables():
         # ============================================
         # USER_ROLES TABLE (User-Organization-Role mapping)
         # ============================================
-        cursor.execute("""
+        execute_query(cursor, """
             CREATE TABLE IF NOT EXISTS user_roles (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id TEXT NOT NULL,
@@ -101,7 +93,7 @@ def init_enterprise_tables():
         # ============================================
         # PERMISSIONS TABLE (Granular permissions)
         # ============================================
-        cursor.execute("""
+        execute_query(cursor, """
             CREATE TABLE IF NOT EXISTS permissions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 resource TEXT NOT NULL,
@@ -115,7 +107,7 @@ def init_enterprise_tables():
         # ============================================
         # ORGANIZATION_INVITES TABLE
         # ============================================
-        cursor.execute("""
+        execute_query(cursor, """
             CREATE TABLE IF NOT EXISTS organization_invites (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 organization_id TEXT NOT NULL,
@@ -135,27 +127,27 @@ def init_enterprise_tables():
         # ============================================
         # INDEXES
         # ============================================
-        cursor.execute("""
+        execute_query(cursor, """
             CREATE INDEX IF NOT EXISTS idx_organizations_slug 
             ON organizations(slug)
         """)
         
-        cursor.execute("""
+        execute_query(cursor, """
             CREATE INDEX IF NOT EXISTS idx_organizations_plan 
             ON organizations(plan)
         """)
         
-        cursor.execute("""
+        execute_query(cursor, """
             CREATE INDEX IF NOT EXISTS idx_user_roles_user 
             ON user_roles(user_id)
         """)
         
-        cursor.execute("""
+        execute_query(cursor, """
             CREATE INDEX IF NOT EXISTS idx_user_roles_org 
             ON user_roles(organization_id)
         """)
         
-        cursor.execute("""
+        execute_query(cursor, """
             CREATE INDEX IF NOT EXISTS idx_permissions_resource 
             ON permissions(resource)
         """)
@@ -166,11 +158,11 @@ def init_enterprise_tables():
         now = datetime.now().isoformat()
         
         # Check if roles exist
-        cursor.execute("SELECT COUNT(*) FROM roles")
+        execute_query(cursor, "SELECT COUNT(*) FROM roles")
         if cursor.fetchone()[0] == 0:
             
             # Admin role
-            cursor.execute("""
+            execute_query(cursor, """
                 INSERT INTO roles (name, display_name, description, permissions, is_system, created_at, updated_at)
                 VALUES (?, ?, ?, ?, 1, ?, ?)
             """, (
@@ -192,7 +184,7 @@ def init_enterprise_tables():
             ))
             
             # Manager role
-            cursor.execute("""
+            execute_query(cursor, """
                 INSERT INTO roles (name, display_name, description, permissions, is_system, created_at, updated_at)
                 VALUES (?, ?, ?, ?, 1, ?, ?)
             """, (
@@ -211,7 +203,7 @@ def init_enterprise_tables():
             ))
             
             # Analyst role
-            cursor.execute("""
+            execute_query(cursor, """
                 INSERT INTO roles (name, display_name, description, permissions, is_system, created_at, updated_at)
                 VALUES (?, ?, ?, ?, 1, ?, ?)
             """, (
@@ -228,7 +220,7 @@ def init_enterprise_tables():
             ))
             
             # Viewer role
-            cursor.execute("""
+            execute_query(cursor, """
                 INSERT INTO roles (name, display_name, description, permissions, is_system, created_at, updated_at)
                 VALUES (?, ?, ?, ?, 1, ?, ?)
             """, (
@@ -249,7 +241,7 @@ def init_enterprise_tables():
         # ============================================
         # INSERT DEFAULT PERMISSIONS
         # ============================================
-        cursor.execute("SELECT COUNT(*) FROM permissions")
+        execute_query(cursor, "SELECT COUNT(*) FROM permissions")
         if cursor.fetchone()[0] == 0:
             
             permissions_data = [
@@ -282,7 +274,7 @@ def init_enterprise_tables():
             ]
             
             for resource, action, description in permissions_data:
-                cursor.execute("""
+                execute_query(cursor, """
                     INSERT INTO permissions (resource, action, description, created_at)
                     VALUES (?, ?, ?, ?)
                 """, (resource, action, description, now))
@@ -322,7 +314,7 @@ def create_organization(
     try:
         now = datetime.now().isoformat()
         
-        cursor.execute("""
+        execute_query(cursor, """
             INSERT INTO organizations 
             (id, name, slug, description, plan, max_users, max_devices, 
              max_scans_per_day, settings, is_active, created_at, updated_at)
@@ -346,7 +338,7 @@ def get_organization(org_id: str) -> Optional[Dict[str, Any]]:
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM organizations WHERE id = ?", (org_id,))
+    execute_query(cursor, "SELECT * FROM organizations WHERE id = ?", (org_id,))
     row = cursor.fetchone()
     conn.close()
     
@@ -363,7 +355,7 @@ def get_user_organizations(user_id: str) -> List[Dict[str, Any]]:
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("""
+    execute_query(cursor, """
         SELECT o.*, r.name as role_name, r.display_name as role_display_name
         FROM organizations o
         JOIN user_roles ur ON o.id = ur.organization_id
@@ -394,7 +386,7 @@ def get_all_roles() -> List[Dict[str, Any]]:
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM roles ORDER BY name")
+    execute_query(cursor, "SELECT * FROM roles ORDER BY name")
     rows = cursor.fetchall()
     conn.close()
     
@@ -413,7 +405,7 @@ def get_role_by_name(name: str) -> Optional[Dict[str, Any]]:
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM roles WHERE name = ?", (name,))
+    execute_query(cursor, "SELECT * FROM roles WHERE name = ?", (name,))
     row = cursor.fetchone()
     conn.close()
     
@@ -441,7 +433,7 @@ def assign_user_role(
     
     try:
         # Get role ID
-        cursor.execute("SELECT id FROM roles WHERE name = ?", (role_name,))
+        execute_query(cursor, "SELECT id FROM roles WHERE name = ?", (role_name,))
         role_row = cursor.fetchone()
         
         if not role_row:
@@ -452,7 +444,7 @@ def assign_user_role(
         now = datetime.now().isoformat()
         
         # Insert or update user role
-        cursor.execute("""
+        execute_query(cursor, """
             INSERT INTO user_roles (user_id, organization_id, role_id, assigned_by, assigned_at)
             VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(user_id, organization_id) 
@@ -476,7 +468,7 @@ def get_user_role(user_id: str, organization_id: str) -> Optional[Dict[str, Any]
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("""
+    execute_query(cursor, """
         SELECT r.*, ur.assigned_at, ur.assigned_by
         FROM roles r
         JOIN user_roles ur ON r.id = ur.role_id
