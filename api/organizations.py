@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 import uuid
 import secrets
 import logging
+import json
 
 from database.schema_enterprise import (
     get_connection,
@@ -21,6 +22,7 @@ from database.schema_enterprise import (
     get_user_organizations,
     assign_user_role,
 )
+from database.postgres import convert_query_placeholders  # ✨ ADDED
 from middleware.tenant_context import (
     require_organization,
     get_current_organization,
@@ -129,7 +131,12 @@ async def create_new_organization(
         # Check slug uniqueness
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT id FROM organizations WHERE slug = ?", (org_data.slug,))
+        
+        query = "SELECT id FROM organizations WHERE slug = ?"
+        params = (org_data.slug,)
+        query, params = convert_query_placeholders(query, params)
+        cursor.execute(query, params)
+        
         if cursor.fetchone():
             conn.close()
             raise HTTPException(status_code=400, detail="Organization slug already exists")
@@ -247,7 +254,7 @@ async def update_organization(
     org_id: str,
     org_data: OrganizationUpdate,
     request: Request,
-    _: bool = Depends(RequireAdmin),  # тук оставяме Admin check – това е по-критично
+    _: bool = Depends(RequireAdmin),
 ):
     """
     Update organization details (admin only).
@@ -316,7 +323,9 @@ async def update_organization(
         params.append(org_id)
 
         query = f"UPDATE organizations SET {', '.join(updates)} WHERE id = ?"
+        query, params = convert_query_placeholders(query, params)
         cursor.execute(query, params)
+        
         conn.commit()
         conn.close()
 
@@ -337,7 +346,9 @@ async def update_organization(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# -------- Settings --------
+# ============================================
+# ORGANIZATION SETTINGS
+# ============================================
 
 @router.get("/{org_id}/settings")
 async def get_organization_settings(
@@ -394,14 +405,14 @@ async def update_organization_settings(
         conn = get_connection()
         cursor = conn.cursor()
 
-        cursor.execute(
-            """
+        query = """
             UPDATE organizations
             SET settings = ?, updated_at = ?
             WHERE id = ?
-            """,
-            (json.dumps(data.settings), datetime.now().isoformat(), org_id),
-        )
+        """
+        params = (json.dumps(data.settings), datetime.now().isoformat(), org_id)
+        query, params = convert_query_placeholders(query, params)
+        cursor.execute(query, params)
 
         conn.commit()
         conn.close()
@@ -421,7 +432,9 @@ async def update_organization_settings(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# -------- Members & Invites (по-рядко ползвани в UI, но ги оставям) --------
+# ============================================
+# ORGANIZATION MEMBERS
+# ============================================
 
 @router.get("/{org_id}/members")
 async def list_organization_members(
@@ -446,8 +459,7 @@ async def list_organization_members(
         conn = get_connection()
         cursor = conn.cursor()
 
-        cursor.execute(
-            """
+        query = """
             SELECT 
                 u.id,
                 u.username,
@@ -462,9 +474,10 @@ async def list_organization_members(
             JOIN roles r ON ur.role_id = r.id
             WHERE ur.organization_id = ?
             ORDER BY u.username
-            """,
-            (org_id,),
-        )
+        """
+        params = (org_id,)
+        query, params = convert_query_placeholders(query, params)
+        cursor.execute(query, params)
 
         rows = cursor.fetchall()
         conn.close()
@@ -482,7 +495,6 @@ async def list_organization_members(
     except Exception as e:
         logger.error(f"Error listing org members: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 
 @router.put("/{org_id}/members/{user_id}")
@@ -541,28 +553,28 @@ async def remove_member(
         cursor = conn.cursor()
 
         # Check if user is the last admin
-        cursor.execute(
-            """
+        query1 = """
             SELECT COUNT(*) 
             FROM user_roles ur
             JOIN roles r ON ur.role_id = r.id
             WHERE ur.organization_id = ? AND r.name = 'admin'
-        """,
-            (org_id,),
-        )
+        """
+        params1 = (org_id,)
+        query1, params1 = convert_query_placeholders(query1, params1)
+        cursor.execute(query1, params1)
 
         admin_count = cursor.fetchone()[0]
 
         # Check if user being removed is admin
-        cursor.execute(
-            """
+        query2 = """
             SELECT r.name
             FROM user_roles ur
             JOIN roles r ON ur.role_id = r.id
             WHERE ur.user_id = ? AND ur.organization_id = ?
-        """,
-            (user_id, org_id),
-        )
+        """
+        params2 = (user_id, org_id)
+        query2, params2 = convert_query_placeholders(query2, params2)
+        cursor.execute(query2, params2)
 
         role_row = cursor.fetchone()
         if role_row and role_row[0] == "admin" and admin_count <= 1:
@@ -573,13 +585,13 @@ async def remove_member(
             )
 
         # Remove user
-        cursor.execute(
-            """
+        query3 = """
             DELETE FROM user_roles 
             WHERE user_id = ? AND organization_id = ?
-        """,
-            (user_id, org_id),
-        )
+        """
+        params3 = (user_id, org_id)
+        query3, params3 = convert_query_placeholders(query3, params3)
+        cursor.execute(query3, params3)
 
         conn.commit()
         conn.close()
@@ -595,84 +607,6 @@ async def remove_member(
         raise
     except Exception as e:
         logger.error(f"Error removing member: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ============================================
-# ORGANIZATION SETTINGS
-# ============================================
-
-@router.get("/{org_id}/settings")
-async def get_organization_settings(
-    org_id: str,
-    request: Request,
-    _: bool = Depends(RequireOrganizationsRead),
-):
-    """
-    Get organization settings
-    Requires: organizations.read permission
-    """
-    try:
-        org = get_organization(org_id)
-
-        if not org:
-            raise HTTPException(status_code=404, detail="Organization not found")
-
-        return {
-            "success": True,
-            "settings": org.get("settings", {}),
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting settings: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.put("/{org_id}/settings")
-async def update_organization_settings(
-    org_id: str,
-    settings_data: OrganizationSettings,
-    request: Request,
-    _: bool = Depends(RequireOrganizationsWrite),
-):
-    """
-    Update organization settings
-    Requires: organizations.write permission
-    """
-    try:
-        import json
-
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            UPDATE organizations 
-            SET settings = ?, updated_at = ?
-            WHERE id = ?
-        """,
-            (
-                json.dumps(settings_data.settings),
-                datetime.now().isoformat(),
-                org_id,
-            ),
-        )
-
-        conn.commit()
-        conn.close()
-
-        logger.info(f"Organization settings updated: {org_id}")
-
-        return {
-            "success": True,
-            "message": "Settings updated successfully",
-            "settings": settings_data.settings,
-        }
-
-    except Exception as e:
-        logger.error(f"Error updating settings: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -695,12 +629,13 @@ async def get_organization_stats(
         cursor = conn.cursor()
 
         # Get member count
-        cursor.execute(
-            """
+        query = """
             SELECT COUNT(*) FROM user_roles WHERE organization_id = ?
-        """,
-            (org_id,),
-        )
+        """
+        params = (org_id,)
+        query, params = convert_query_placeholders(query, params)
+        cursor.execute(query, params)
+        
         member_count = cursor.fetchone()[0]
 
         # For now, mock scans / threats
