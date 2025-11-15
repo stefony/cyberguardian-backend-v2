@@ -21,15 +21,18 @@ async def initialize_database():
     try:
         logger.info("🔧 Starting database initialization...")
         
-        # Initialize main tables
-        from database.init_tables import init_database
-        init_database()
-        logger.info("✅ Main tables initialized")
-        
-        # Initialize enterprise tables
+        # Initialize enterprise tables (this also creates base tables)
         from database.schema_enterprise import init_enterprise_tables
         init_enterprise_tables()
         logger.info("✅ Enterprise tables initialized")
+        
+        # Also init main tables for good measure
+        from database.db import get_connection
+        from database.init_tables import init_database
+        conn = get_connection()
+        init_database(conn)
+        conn.close()
+        logger.info("✅ Main tables initialized")
         
         return JSONResponse(
             status_code=200,
