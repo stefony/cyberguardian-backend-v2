@@ -11,6 +11,7 @@ import json
 import logging
 import hashlib
 from database.postgres import convert_query_placeholders
+from database.postgres import execute_query
 
 logger = logging.getLogger(__name__)
 
@@ -740,12 +741,12 @@ def create_user(
     # Hash password (simple SHA256 for now, will upgrade to bcrypt later)
     hashed_password = password
     
-    cursor.execute("""
-        INSERT INTO users 
-        (id, email, username, hashed_password, is_active, is_verified, is_admin, 
-         created_at, full_name, company)
-        VALUES (?, ?, ?, ?, 1, 0, ?, ?, ?, ?)
-    """, (user_id, email, username, hashed_password, int(is_admin), now, full_name, company))
+    execute_query(cursor, """
+    INSERT INTO users
+    (id, email, username, hashed_password, is_active, is_verified, is_admin,
+     created_at, full_name, company)
+    VALUES (?, ?, ?, 1, 0, ?, ?, ?, ?, ?)
+""", (user_id, email, username, hashed_password, int(is_admin), now, full_name, company))
     
     conn.commit()
     conn.close()
@@ -758,7 +759,7 @@ def get_user_by_email(email: str) -> Optional[Dict[str, Any]]:
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
+    execute_query(cursor, "SELECT * FROM users WHERE email = ?", (email,))
     row = cursor.fetchone()
     conn.close()
     
@@ -770,7 +771,7 @@ def get_user_by_username(username: str) -> Optional[Dict[str, Any]]:
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
+    execute_query(cursor, "SELECT * FROM users WHERE username = ?", (username,))
     row = cursor.fetchone()
     conn.close()
     
@@ -782,7 +783,7 @@ def get_user_by_id(user_id: str) -> Optional[Dict[str, Any]]:
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+    execute_query(cursor, "SELECT * FROM users WHERE id = ?", (user_id,))
     row = cursor.fetchone()
     conn.close()
     
@@ -801,11 +802,11 @@ def update_last_login(user_id: str):
     
     now = datetime.now().isoformat()
     
-    cursor.execute("""
-        UPDATE users 
-        SET last_login = ?, updated_at = ?
-        WHERE id = ?
-    """, (now, now, user_id))
+    execute_query(cursor, """
+    UPDATE users
+    SET last_login = ?, updated_at = ?
+    WHERE id = ?
+""", (now, now, user_id))
     
     conn.commit()
     conn.close()
