@@ -9,6 +9,7 @@ to database operations without modifying original db.py functions.
 from typing import List, Dict, Any, Optional
 from database import db
 import logging
+from database.postgres import execute_query
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +53,7 @@ def add_threat_mt(
     conn = db.get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("""
+    execute_query(cursor,"""
         UPDATE threats 
         SET organization_id = ?
         WHERE id = ?
@@ -115,7 +116,7 @@ def get_threat_stats_mt(organization_id: str) -> Dict[str, Any]:
     cursor = conn.cursor()
     
     # Total threats for this org
-    cursor.execute("""
+    execute_query(cursor,"""
         SELECT COUNT(*) as total 
         FROM threats 
         WHERE organization_id = ?
@@ -123,7 +124,7 @@ def get_threat_stats_mt(organization_id: str) -> Dict[str, Any]:
     total = cursor.fetchone()["total"]
     
     # Count by severity
-    cursor.execute("""
+    execute_query(cursor,"""
         SELECT severity, COUNT(*) as count 
         FROM threats 
         WHERE organization_id = ?
@@ -133,7 +134,7 @@ def get_threat_stats_mt(organization_id: str) -> Dict[str, Any]:
     severity_counts = {row["severity"]: row["count"] for row in severity_rows}
     
     # Count by status
-    cursor.execute("""
+    execute_query(cursor,"""
         SELECT status, COUNT(*) as count 
         FROM threats 
         WHERE organization_id = ?
@@ -185,7 +186,7 @@ def add_scan_mt(
     conn = db.get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("""
+    execute_query(cursor,"""
         UPDATE scans 
         SET organization_id = ?
         WHERE id = ?
@@ -252,7 +253,7 @@ def add_honeypot_mt(
     conn = db.get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("""
+    execute_query(cursor,"""
         UPDATE honeypots 
         SET organization_id = ?
         WHERE id = ?
@@ -321,7 +322,7 @@ def add_fs_event_mt(
     conn = db.get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("""
+    execute_query(cursor,"""
         UPDATE fs_events 
         SET organization_id = ?
         WHERE id = ?
@@ -390,7 +391,7 @@ def add_ioc_mt(
     conn = db.get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("""
+    execute_query(cursor,"""
         UPDATE iocs 
         SET organization_id = ?
         WHERE id = ?
@@ -476,7 +477,7 @@ def get_audit_logs_mt(
     query += " ORDER BY created_at DESC LIMIT ?"
     params.append(limit)
     
-    cursor.execute(query, params)
+    execute_query(cursor,query, params)
     rows = cursor.fetchall()
     conn.close()
     
@@ -509,7 +510,7 @@ def get_organization_summary(organization_id: str) -> Dict[str, Any]:
     cursor = conn.cursor()
     
     # Count threats
-    cursor.execute("""
+    execute_query(cursor,"""
         SELECT COUNT(*) as count 
         FROM threats 
         WHERE organization_id = ?
@@ -517,7 +518,7 @@ def get_organization_summary(organization_id: str) -> Dict[str, Any]:
     threats_count = cursor.fetchone()["count"]
     
     # Count scans
-    cursor.execute("""
+    execute_query(cursor,"""
         SELECT COUNT(*) as count 
         FROM scans 
         WHERE organization_id = ?
@@ -525,7 +526,7 @@ def get_organization_summary(organization_id: str) -> Dict[str, Any]:
     scans_count = cursor.fetchone()["count"]
     
     # Count honeypots
-    cursor.execute("""
+    execute_query(cursor,"""
         SELECT COUNT(*) as count 
         FROM honeypots 
         WHERE organization_id = ?
@@ -533,7 +534,7 @@ def get_organization_summary(organization_id: str) -> Dict[str, Any]:
     honeypots_count = cursor.fetchone()["count"]
     
     # Count IOCs
-    cursor.execute("""
+    execute_query(cursor,"""
         SELECT COUNT(*) as count 
         FROM iocs 
         WHERE organization_id = ?
