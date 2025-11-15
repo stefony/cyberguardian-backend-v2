@@ -62,10 +62,9 @@ def get_ip_geolocation(ip: str) -> Dict[str, Any]:
 
 
 def get_connection():
-    """Get database connection"""
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row  # Return rows as dictionaries
-    return conn
+    """Get database connection (PostgreSQL in production, SQLite local)"""
+    from database.postgres import get_connection as pg_get_connection
+    return pg_get_connection()
 
 
 def init_database():
