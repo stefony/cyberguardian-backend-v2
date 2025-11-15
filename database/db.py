@@ -109,7 +109,7 @@ def add_threat(
     threat_timestamp = timestamp or now
     details_json = json.dumps(details) if details else None
     
-    cursor.execute("""
+    execute_query(cursor,"""
         INSERT INTO threats 
         (timestamp, source_ip, threat_type, severity, description, status, details, confidence_score, organization_id, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)
@@ -160,7 +160,7 @@ def get_threats(
     query += " ORDER BY timestamp DESC LIMIT ? OFFSET ?"
     params.extend([limit, offset])
     
-    cursor.execute(query, params)
+    execute_query(cursor,query, params)
     rows = cursor.fetchall()
     conn.close()
     
@@ -193,7 +193,7 @@ def get_threat_by_id(threat_id: int) -> Optional[Dict[str, Any]]:
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM threats WHERE id = ?", (threat_id,))
+    execute_query(cursor,"SELECT * FROM threats WHERE id = ?", (threat_id,))
     row = cursor.fetchone()
     conn.close()
     
@@ -217,7 +217,7 @@ def update_threat_status(threat_id: int, status: str, action: str, reason: Optio
     now = datetime.now().isoformat()
     
     # Update threat status
-    cursor.execute("""
+    execute_query(cursor,"""
         UPDATE threats 
         SET status = ?, updated_at = ?
         WHERE id = ?
@@ -228,7 +228,7 @@ def update_threat_status(threat_id: int, status: str, action: str, reason: Optio
         return False
     
     # Log action
-    cursor.execute("""
+    execute_query(cursor,"""
         INSERT INTO threat_actions (threat_id, action, reason, performed_at)
         VALUES (?, ?, ?, ?)
     """, (threat_id, action, reason, now))
@@ -247,11 +247,11 @@ def get_threat_stats() -> Dict[str, Any]:
     cursor = conn.cursor()
     
     # Total threats
-    cursor.execute("SELECT COUNT(*) as total FROM threats")
+    execute_query(cursor,"SELECT COUNT(*) as total FROM threats")
     total = cursor.fetchone()["total"]
     
     # Count by severity
-    cursor.execute("""
+    execute_query(cursor,"""
         SELECT severity, COUNT(*) as count 
         FROM threats 
         GROUP BY severity
@@ -260,7 +260,7 @@ def get_threat_stats() -> Dict[str, Any]:
     severity_counts = {row["severity"]: row["count"] for row in severity_rows}
     
     # Count by status
-    cursor.execute("""
+    execute_query(cursor,"""
         SELECT status, COUNT(*) as count 
         FROM threats 
         GROUP BY status
@@ -289,7 +289,7 @@ def delete_old_threats(days: int = 30) -> int:
     cutoff_date = datetime.now().timestamp() - (days * 24 * 60 * 60)
     cutoff_iso = datetime.fromtimestamp(cutoff_date).isoformat()
     
-    cursor.execute("DELETE FROM threats WHERE created_at < ?", (cutoff_iso,))
+    execute_query(cursor,"DELETE FROM threats WHERE created_at < ?", (cutoff_iso,))
     deleted_count = cursor.rowcount
     
     conn.commit()
@@ -325,7 +325,7 @@ def get_scans(
     query += " ORDER BY started_at DESC LIMIT ?"
     params.append(limit)
     
-    cursor.execute(query, params)
+    execute_query(cursor,query, params)
     rows = cursor.fetchall()
     conn.close()
     
@@ -347,7 +347,7 @@ def get_scan_by_id(scan_id: int) -> Optional[Dict[str, Any]]:
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM scans WHERE id = ?", (scan_id,))
+    execute_query(cursor,"SELECT * FROM scans WHERE id = ?", (scan_id,))
     row = cursor.fetchone()
     conn.close()
     
@@ -381,7 +381,7 @@ def add_scan(
     
     results_json = json.dumps(results) if results else None
     
-    cursor.execute("""
+    execute_query(cursor,"""
         INSERT INTO scans 
         (scan_type, status, started_at, completed_at, duration_seconds, items_scanned, threats_found, results)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -402,11 +402,11 @@ def get_detection_stats() -> Dict[str, Any]:
     cursor = conn.cursor()
     
     # Total scans
-    cursor.execute("SELECT COUNT(*) as total FROM scans")
+    execute_query(cursor,"SELECT COUNT(*) as total FROM scans")
     total = cursor.fetchone()["total"]
     
     # Count by status
-    cursor.execute("""
+    execute_query(cursor,"""
         SELECT status, COUNT(*) as count 
         FROM scans 
         GROUP BY status
@@ -415,7 +415,7 @@ def get_detection_stats() -> Dict[str, Any]:
     status_counts = {row["status"]: row["count"] for row in status_rows}
     
     # Count by scan type
-    cursor.execute("""
+    execute_query(cursor,"""
         SELECT scan_type, COUNT(*) as count 
         FROM scans 
         GROUP BY scan_type
@@ -424,11 +424,11 @@ def get_detection_stats() -> Dict[str, Any]:
     type_counts = {row["scan_type"]: row["count"] for row in type_rows}
     
     # Total threats found
-    cursor.execute("SELECT SUM(threats_found) as total_threats FROM scans")
+    execute_query(cursor,"SELECT SUM(threats_found) as total_threats FROM scans")
     total_threats = cursor.fetchone()["total_threats"] or 0
     
     # Average scan duration
-    cursor.execute("SELECT AVG(duration_seconds) as avg_duration FROM scans WHERE duration_seconds IS NOT NULL")
+    execute_query(cursor,"SELECT AVG(duration_seconds) as avg_duration FROM scans WHERE duration_seconds IS NOT NULL")
     avg_duration = cursor.fetchone()["avg_duration"] or 0
     
     conn.close()
@@ -473,7 +473,7 @@ def get_honeypots(
     # Convert placeholders for PostgreSQL
     query, params = convert_query_placeholders(query, params)
     
-    cursor.execute(query, params)
+    execute_query(cursor,query, params)
     rows = cursor.fetchall()
     conn.close()
     
@@ -492,7 +492,7 @@ def get_honeypot_by_id(honeypot_id: int) -> Optional[Dict[str, Any]]:
     params = [honeypot_id]
     query, params = convert_query_placeholders(query, params)
     
-    cursor.execute(query, params)
+    execute_query(cursor,query, params)
     row = cursor.fetchone()
     conn.close()
     
@@ -529,7 +529,7 @@ def add_honeypot(
     params = [name, type, status, ip_address, port, description, interactions, now, now]
     query, params = convert_query_placeholders(query, params)
     
-    cursor.execute(query, params)
+    execute_query(cursor,query, params)
     
     honeypot_id = cursor.lastrowid
     conn.commit()
@@ -555,7 +555,7 @@ def update_honeypot_status(honeypot_id: int, status: str) -> bool:
     params = [status, now, honeypot_id]
     query, params = convert_query_placeholders(query, params)
     
-    cursor.execute(query, params)
+    execute_query(cursor,query, params)
     
     success = cursor.rowcount > 0
     conn.commit()
@@ -587,7 +587,7 @@ def get_honeypot_logs(
     # Convert placeholders for PostgreSQL
     query, params = convert_query_placeholders(query, params)
     
-    cursor.execute(query, params)
+    execute_query(cursor,query, params)
     rows = cursor.fetchall()
     conn.close()
     
@@ -638,7 +638,7 @@ def add_honeypot_log(
     params = [honeypot_id, now, source_ip, action, details_json, country, city, latitude, longitude]
     query, params = convert_query_placeholders(query, params)
     
-    cursor.execute(query, params)
+    execute_query(cursor,query, params)
     
     log_id = cursor.lastrowid
     
@@ -653,7 +653,7 @@ def add_honeypot_log(
     update_params = [now, now, honeypot_id]
     update_query, update_params = convert_query_placeholders(update_query, update_params)
     
-    cursor.execute(update_query, update_params)
+    execute_query(cursor,update_query, update_params)
     
     conn.commit()
     conn.close()
@@ -669,25 +669,25 @@ def get_deception_stats() -> Dict[str, Any]:
     cursor = conn.cursor()
     
     # Total honeypots
-    cursor.execute("SELECT COUNT(*) as total FROM honeypots")
+    execute_query(cursor,"SELECT COUNT(*) as total FROM honeypots")
     total = cursor.fetchone()["total"]
     
     # Active honeypots
     query = "SELECT COUNT(*) as active FROM honeypots WHERE status = ?"
     params = ['active']
     query, params = convert_query_placeholders(query, params)
-    cursor.execute(query, params)
+    execute_query(cursor,query, params)
     active = cursor.fetchone()["active"]
     
     # Compromised honeypots
     query = "SELECT COUNT(*) as compromised FROM honeypots WHERE status = ?"
     params = ['compromised']
     query, params = convert_query_placeholders(query, params)
-    cursor.execute(query, params)
+    execute_query(cursor,query, params)
     compromised = cursor.fetchone()["compromised"]
     
     # Total interactions
-    cursor.execute("SELECT SUM(interactions) as total_interactions FROM honeypots")
+    execute_query(cursor,"SELECT SUM(interactions) as total_interactions FROM honeypots")
     total_interactions = cursor.fetchone()["total_interactions"] or 0
     
     # Interactions today
@@ -699,7 +699,7 @@ def get_deception_stats() -> Dict[str, Any]:
     """
     params = [today]
     query, params = convert_query_placeholders(query, params)
-    cursor.execute(query, params)
+    execute_query(cursor,query, params)
     interactions_today = cursor.fetchone()["today_interactions"]
     
     conn.close()
@@ -829,7 +829,7 @@ def add_fs_event(
     now = datetime.now().isoformat()
     ml_json = json.dumps(ml_details) if ml_details else None
     
-    cursor.execute("""
+    execute_query(cursor,"""
         INSERT INTO fs_events 
         (timestamp, event_type, file_path, file_size, file_hash, 
          threat_score, threat_level, ml_details, quarantined, created_at)
@@ -849,7 +849,7 @@ def get_fs_events(limit: int = 100) -> List[Dict[str, Any]]:
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("""
+    execute_query(cursor,"""
         SELECT * FROM fs_events 
         ORDER BY timestamp DESC 
         LIMIT ?
@@ -873,19 +873,19 @@ def get_protection_settings() -> Dict[str, Any]:
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM protection_settings WHERE id = 1")
+    execute_query(cursor,"SELECT * FROM protection_settings WHERE id = 1")
     row = cursor.fetchone()
     
     if not row:
         # Create default settings
         now = datetime.now().isoformat()
-        cursor.execute("""
+        execute_query(cursor,"""
             INSERT INTO protection_settings 
             (id, enabled, watch_paths, auto_quarantine, threat_threshold, updated_at)
             VALUES (1, 0, '[]', 0, 80, ?)
         """, (now,))
         conn.commit()
-        cursor.execute("SELECT * FROM protection_settings WHERE id = 1")
+        execute_query(cursor,"SELECT * FROM protection_settings WHERE id = 1")
         row = cursor.fetchone()
     
     conn.close()
@@ -921,7 +921,7 @@ def update_protection_settings(
     
     params.append(1)  # WHERE id = 1
     
-    cursor.execute(f"""
+    execute_query(cursor,f"""
         UPDATE protection_settings 
         SET {', '.join(updates)}
         WHERE id = ?
@@ -950,7 +950,7 @@ def add_scan_schedule(
     
     now = datetime.now().isoformat()
     
-    cursor.execute("""
+    execute_query(cursor,"""
         INSERT INTO scan_schedules 
         (name, scan_type, target_path, schedule_type, cron_expression, 
          interval_days, enabled, created_at, updated_at)
@@ -975,7 +975,7 @@ def get_scan_schedules(enabled_only: bool = False) -> List[Dict[str, Any]]:
         query += " WHERE enabled = 1"
     query += " ORDER BY created_at DESC"
     
-    cursor.execute(query)
+    execute_query(cursor,query)
     rows = cursor.fetchall()
     conn.close()
     
@@ -987,7 +987,7 @@ def get_scan_schedule(schedule_id: int) -> Optional[Dict[str, Any]]:
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM scan_schedules WHERE id = ?", (schedule_id,))
+    execute_query(cursor,"SELECT * FROM scan_schedules WHERE id = ?", (schedule_id,))
     row = cursor.fetchone()
     conn.close()
     
@@ -1026,7 +1026,7 @@ def update_scan_schedule(
     
     params.append(schedule_id)
     
-    cursor.execute(f"""
+    execute_query(cursor,f"""
         UPDATE scan_schedules 
         SET {', '.join(updates)}
         WHERE id = ?
@@ -1044,7 +1044,7 @@ def delete_scan_schedule(schedule_id: int) -> bool:
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("DELETE FROM scan_schedules WHERE id = ?", (schedule_id,))
+    execute_query(cursor,"DELETE FROM scan_schedules WHERE id = ?", (schedule_id,))
     
     success = cursor.rowcount > 0
     conn.commit()
@@ -1066,7 +1066,7 @@ def add_scan_history(
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("""
+    execute_query(cursor,"""
         INSERT INTO scan_history 
         (schedule_id, scan_type, target_path, started_at, status)
         VALUES (?, ?, ?, ?, ?)
@@ -1125,7 +1125,7 @@ def update_scan_history(
     
     params.append(history_id)
     
-    cursor.execute(f"""
+    execute_query(cursor,f"""
         UPDATE scan_history 
         SET {', '.join(updates)}
         WHERE id = ?
@@ -1143,7 +1143,7 @@ def get_scan_history(limit: int = 50) -> List[Dict[str, Any]]:
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("""
+    execute_query(cursor,"""
         SELECT * FROM scan_history 
         ORDER BY started_at DESC 
         LIMIT ?
@@ -1176,7 +1176,7 @@ def add_email_account(
     
     now = datetime.now().isoformat()
     
-    cursor.execute("""
+    execute_query(cursor,"""
         INSERT INTO user_email_accounts 
         (user_id, email_address, provider, auth_method, imap_host, imap_port,
          encrypted_password, access_token, refresh_token, token_expiry,
@@ -1197,7 +1197,7 @@ def get_user_email_accounts(user_id: str) -> List[Dict[str, Any]]:
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("""
+    execute_query(cursor,"""
         SELECT * FROM user_email_accounts 
         WHERE user_id = ?
         ORDER BY created_at DESC
@@ -1214,7 +1214,7 @@ def get_email_account(account_id: int) -> Optional[Dict[str, Any]]:
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM user_email_accounts WHERE id = ?", (account_id,))
+    execute_query(cursor,"SELECT * FROM user_email_accounts WHERE id = ?", (account_id,))
     row = cursor.fetchone()
     conn.close()
     
@@ -1226,7 +1226,7 @@ def get_email_account_by_email(user_id: str, email_address: str) -> Optional[Dic
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("""
+    execute_query(cursor,"""
         SELECT * FROM user_email_accounts 
         WHERE user_id = ? AND email_address = ?
     """, (user_id, email_address))
@@ -1279,7 +1279,7 @@ def update_email_account(
     
     params.append(account_id)
     
-    cursor.execute(f"""
+    execute_query(cursor,f"""
         UPDATE user_email_accounts 
         SET {', '.join(updates)}
         WHERE id = ?
@@ -1297,7 +1297,7 @@ def delete_email_account(account_id: int) -> bool:
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("DELETE FROM user_email_accounts WHERE id = ?", (account_id,))
+    execute_query(cursor,"DELETE FROM user_email_accounts WHERE id = ?", (account_id,))
     
     success = cursor.rowcount > 0
     conn.commit()
@@ -1317,7 +1317,7 @@ def update_email_scan_stats(
     
     now = datetime.now().isoformat()
     
-    cursor.execute("""
+    execute_query(cursor,"""
         UPDATE user_email_accounts 
         SET total_scanned = total_scanned + ?,
             phishing_detected = phishing_detected + ?,
@@ -1344,7 +1344,7 @@ def add_email_scan_history(
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("""
+    execute_query(cursor,"""
         INSERT INTO email_scan_history 
         (email_account_id, scan_started_at, scan_status)
         VALUES (?, ?, ?)
@@ -1413,7 +1413,7 @@ def update_email_scan_history(
     
     params.append(history_id)
     
-    cursor.execute(f"""
+    execute_query(cursor,f"""
         UPDATE email_scan_history 
         SET {', '.join(updates)}
         WHERE id = ?
@@ -1431,7 +1431,7 @@ def get_email_scan_history(email_account_id: int, limit: int = 50) -> List[Dict[
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("""
+    execute_query(cursor,"""
         SELECT * FROM email_scan_history 
         WHERE email_account_id = ?
         ORDER BY scan_started_at DESC 
@@ -1473,7 +1473,7 @@ def add_scanned_email(
     recommendations_json = json.dumps(recommendations)
     
     try:
-        cursor.execute("""
+        execute_query(cursor,"""
             INSERT INTO scanned_emails 
             (scan_history_id, email_account_id, email_id, subject, sender, recipient,
              date, is_phishing, phishing_score, threat_level, indicators, urls,
@@ -1499,7 +1499,7 @@ def get_scanned_emails(email_account_id: int, limit: int = 100) -> List[Dict[str
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("""
+    execute_query(cursor,"""
         SELECT * FROM scanned_emails 
         WHERE email_account_id = ?
         ORDER BY scanned_at DESC 
@@ -1535,7 +1535,7 @@ def add_exclusion(
     now = datetime.now().isoformat()
     
     try:
-        cursor.execute("""
+        execute_query(cursor,"""
             INSERT INTO exclusions (type, value, reason, created_at, created_by)
             VALUES (?, ?, ?, ?, ?)
         """, (exclusion_type, value, reason, now, created_by))
@@ -1555,9 +1555,9 @@ def get_exclusions(exclusion_type: Optional[str] = None) -> List[Dict[str, Any]]
     cursor = conn.cursor()
     
     if exclusion_type:
-        cursor.execute("SELECT * FROM exclusions WHERE type = ? ORDER BY created_at DESC", (exclusion_type,))
+        execute_query(cursor,"SELECT * FROM exclusions WHERE type = ? ORDER BY created_at DESC", (exclusion_type,))
     else:
-        cursor.execute("SELECT * FROM exclusions ORDER BY created_at DESC")
+        execute_query(cursor,"SELECT * FROM exclusions ORDER BY created_at DESC")
     
     rows = cursor.fetchall()
     conn.close()
@@ -1570,7 +1570,7 @@ def delete_exclusion(exclusion_id: int) -> bool:
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("DELETE FROM exclusions WHERE id = ?", (exclusion_id,))
+    execute_query(cursor,"DELETE FROM exclusions WHERE id = ?", (exclusion_id,))
     success = cursor.rowcount > 0
     
     conn.commit()
@@ -1584,7 +1584,7 @@ def is_excluded(exclusion_type: str, value: str) -> bool:
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("""
+    execute_query(cursor,"""
         SELECT COUNT(*) as count FROM exclusions 
         WHERE type = ? AND value = ?
     """, (exclusion_type, value))
@@ -1616,12 +1616,12 @@ def add_ioc(
     now = datetime.now().isoformat()
     
     # Check if exists
-    cursor.execute("SELECT id, times_seen FROM iocs WHERE ioc_value = ?", (ioc_value,))
+    execute_query(cursor,"SELECT id, times_seen FROM iocs WHERE ioc_value = ?", (ioc_value,))
     existing = cursor.fetchone()
     
     if existing:
         # Update existing
-        cursor.execute("""
+        execute_query(cursor,"""
             UPDATE iocs 
             SET times_seen = times_seen + 1, 
                 last_seen = ?,
@@ -1637,7 +1637,7 @@ def add_ioc(
         mitre_techniques_json = json.dumps(mitre_techniques) if mitre_techniques else None
         tags_json = json.dumps(tags) if tags else None
         
-        cursor.execute("""
+        execute_query(cursor,"""
             INSERT INTO iocs 
             (ioc_type, ioc_value, threat_type, threat_name, severity, confidence,
              source, description, mitre_tactics, mitre_techniques, tags,
@@ -1660,7 +1660,7 @@ def get_ioc(ioc_value: str) -> Optional[Dict[str, Any]]:
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("""
+    execute_query(cursor,"""
         SELECT * FROM iocs 
         WHERE ioc_value = ? AND is_active = 1 AND is_whitelisted = 0
     """, (ioc_value,))
@@ -1710,7 +1710,7 @@ def get_iocs(
     query += " ORDER BY created_at DESC LIMIT ?"
     params.append(limit)
     
-    cursor.execute(query, params)
+    execute_query(cursor,query, params)
     rows = cursor.fetchall()
     conn.close()
     
@@ -1768,7 +1768,7 @@ def record_threat_match(
     
     now = datetime.now().isoformat()
     
-    cursor.execute("""
+    execute_query(cursor,"""
         INSERT INTO threat_matches 
         (ioc_id, matched_value, match_type, detection_source, file_path,
          threat_level, confidence_score, action_taken, matched_at)
@@ -1789,11 +1789,11 @@ def get_ioc_statistics() -> Dict[str, Any]:
     cursor = conn.cursor()
     
     # Total IOCs
-    cursor.execute("SELECT COUNT(*) as total FROM iocs WHERE is_active = 1")
+    execute_query(cursor,"SELECT COUNT(*) as total FROM iocs WHERE is_active = 1")
     total = cursor.fetchone()["total"]
     
     # By type
-    cursor.execute("""
+    execute_query(cursor,"""
         SELECT ioc_type, COUNT(*) as count 
         FROM iocs 
         WHERE is_active = 1
@@ -1803,7 +1803,7 @@ def get_ioc_statistics() -> Dict[str, Any]:
     by_type = {row["ioc_type"]: row["count"] for row in type_rows}
     
     # By severity
-    cursor.execute("""
+    execute_query(cursor,"""
         SELECT severity, COUNT(*) as count 
         FROM iocs 
         WHERE is_active = 1
@@ -1813,11 +1813,11 @@ def get_ioc_statistics() -> Dict[str, Any]:
     by_severity = {row["severity"]: row["count"] for row in severity_rows}
     
     # Total matches
-    cursor.execute("SELECT COUNT(*) as total FROM threat_matches")
+    execute_query(cursor,"SELECT COUNT(*) as total FROM threat_matches")
     total_matches = cursor.fetchone()["total"]
     
     # Recent threats
-    cursor.execute("""
+    execute_query(cursor,"""
         SELECT COUNT(*) as count 
         FROM iocs 
         WHERE is_active = 1 AND severity IN ('high', 'critical')
@@ -1853,7 +1853,7 @@ def add_mitre_tactic(
     now = datetime.now().isoformat()
     
     try:
-        cursor.execute("""
+        execute_query(cursor,"""
             INSERT INTO mitre_tactics (tactic_id, name, description, url, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?)
         """, (tactic_id, name, description, url, now, now))
@@ -1873,7 +1873,7 @@ def get_mitre_tactics() -> List[Dict[str, Any]]:
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM mitre_tactics ORDER BY tactic_id")
+    execute_query(cursor,"SELECT * FROM mitre_tactics ORDER BY tactic_id")
     rows = cursor.fetchall()
     conn.close()
     
@@ -1895,7 +1895,7 @@ def add_mitre_technique(
     now = datetime.now().isoformat()
     
     # Get tactic DB ID
-    cursor.execute("SELECT id FROM mitre_tactics WHERE tactic_id = ?", (tactic_id,))
+    execute_query(cursor,"SELECT id FROM mitre_tactics WHERE tactic_id = ?", (tactic_id,))
     tactic_row = cursor.fetchone()
     
     if not tactic_row:
@@ -1906,7 +1906,7 @@ def add_mitre_technique(
     platforms_json = json.dumps(platforms) if platforms else None
     
     try:
-        cursor.execute("""
+        execute_query(cursor,"""
             INSERT INTO mitre_techniques 
             (technique_id, name, description, url, tactic_id, platforms, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -1928,14 +1928,14 @@ def get_mitre_techniques(tactic_id: Optional[str] = None) -> List[Dict[str, Any]
     cursor = conn.cursor()
     
     if tactic_id:
-        cursor.execute("""
+        execute_query(cursor,"""
             SELECT t.* FROM mitre_techniques t
             JOIN mitre_tactics tac ON t.tactic_id = tac.id
             WHERE tac.tactic_id = ?
             ORDER BY t.technique_id
         """, (tactic_id,))
     else:
-        cursor.execute("SELECT * FROM mitre_techniques ORDER BY technique_id")
+        execute_query(cursor,"SELECT * FROM mitre_techniques ORDER BY technique_id")
     
     rows = cursor.fetchall()
     conn.close()
@@ -1968,10 +1968,10 @@ def add_threat_mitre_mapping(
     now = datetime.now().isoformat()
     
     # Get technique and tactic DB IDs
-    cursor.execute("SELECT id FROM mitre_techniques WHERE technique_id = ?", (technique_id,))
+    execute_query(cursor,"SELECT id FROM mitre_techniques WHERE technique_id = ?", (technique_id,))
     tech_row = cursor.fetchone()
     
-    cursor.execute("SELECT id FROM mitre_tactics WHERE tactic_id = ?", (tactic_id,))
+    execute_query(cursor,"SELECT id FROM mitre_tactics WHERE tactic_id = ?", (tactic_id,))
     tac_row = cursor.fetchone()
     
     if not tech_row or not tac_row:
@@ -1982,7 +1982,7 @@ def add_threat_mitre_mapping(
     tac_db_id = tac_row["id"]
     evidence_json = json.dumps(evidence) if evidence else None
     
-    cursor.execute("""
+    execute_query(cursor,"""
         INSERT INTO threat_mitre_mappings 
         (threat_id, threat_type, threat_name, technique_id, tactic_id,
          confidence, mapping_source, description, evidence, detected_at, created_at)
@@ -2003,7 +2003,7 @@ def get_threat_mitre_mappings(threat_id: Optional[int] = None, limit: int = 100)
     cursor = conn.cursor()
     
     if threat_id:
-        cursor.execute("""
+        execute_query(cursor,"""
             SELECT 
                 tm.*,
                 tac.tactic_id as tactic_mitre_id,
@@ -2017,7 +2017,7 @@ def get_threat_mitre_mappings(threat_id: Optional[int] = None, limit: int = 100)
             ORDER BY tm.detected_at DESC
         """, (threat_id,))
     else:
-        cursor.execute("""
+        execute_query(cursor,"""
             SELECT 
                 tm.*,
                 tac.tactic_id as tactic_mitre_id,
@@ -2050,18 +2050,18 @@ def get_mitre_statistics() -> Dict[str, Any]:
     cursor = conn.cursor()
     
     # Total tactics and techniques
-    cursor.execute("SELECT COUNT(*) as count FROM mitre_tactics")
+    execute_query(cursor,"SELECT COUNT(*) as count FROM mitre_tactics")
     total_tactics = cursor.fetchone()["count"]
     
-    cursor.execute("SELECT COUNT(*) as count FROM mitre_techniques")
+    execute_query(cursor,"SELECT COUNT(*) as count FROM mitre_techniques")
     total_techniques = cursor.fetchone()["count"]
     
     # Total mappings
-    cursor.execute("SELECT COUNT(*) as count FROM threat_mitre_mappings")
+    execute_query(cursor,"SELECT COUNT(*) as count FROM threat_mitre_mappings")
     total_mappings = cursor.fetchone()["count"]
     
     # Most mapped techniques
-    cursor.execute("""
+    execute_query(cursor,"""
         SELECT 
             tech.technique_id,
             tech.name,
@@ -2101,7 +2101,7 @@ def correlate_threat_with_iocs(threat_id: int):
             cursor = conn.cursor()
             
             # Get threat details
-            cursor.execute("""
+            execute_query(cursor,"""
                 SELECT file_hash, file_path, detection_type, threat_name
                 FROM threats
                 WHERE id = ?
@@ -2115,7 +2115,7 @@ def correlate_threat_with_iocs(threat_id: int):
             
             # Check file hash match
             if threat['file_hash']:
-                cursor.execute("""
+                execute_query(cursor,"""
                     SELECT id, ioc_value, ioc_type, threat_name, severity, confidence
                     FROM iocs
                     WHERE ioc_type = 'hash' AND ioc_value = ?
@@ -2127,7 +2127,7 @@ def correlate_threat_with_iocs(threat_id: int):
             
             # Check if file path contains malicious domains/IPs
             if threat['file_path']:
-                cursor.execute("""
+                execute_query(cursor,"""
                     SELECT id, ioc_value, ioc_type, threat_name, severity, confidence
                     FROM iocs
                     WHERE ioc_type IN ('domain', 'ip', 'url')
@@ -2202,7 +2202,7 @@ def log_integrity_check(file_path: str, expected_checksum: str, actual_checksum:
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("""
+    execute_query(cursor,"""
         INSERT INTO integrity_logs (file_path, expected_checksum, actual_checksum, status, details)
         VALUES (?, ?, ?, ?, ?)
     """, (file_path, expected_checksum, actual_checksum, status, details))
@@ -2226,14 +2226,14 @@ def get_integrity_logs(limit: int = 100, status_filter: str = None):
     cursor = conn.cursor()
     
     if status_filter:
-        cursor.execute("""
+        execute_query(cursor,"""
             SELECT * FROM integrity_logs 
             WHERE status = ?
             ORDER BY timestamp DESC 
             LIMIT ?
         """, (status_filter, limit))
     else:
-        cursor.execute("""
+        execute_query(cursor,"""
             SELECT * FROM integrity_logs 
             ORDER BY timestamp DESC 
             LIMIT ?
@@ -2268,7 +2268,7 @@ def save_manifest_to_db(version: str, manifest_data: dict):
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("""
+    execute_query(cursor,"""
         INSERT INTO file_manifests (version, manifest_data)
         VALUES (?, ?)
     """, (version, json.dumps(manifest_data)))
@@ -2289,7 +2289,7 @@ def get_latest_manifest():
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("""
+    execute_query(cursor,"""
         SELECT * FROM file_manifests 
         ORDER BY created_at DESC 
         LIMIT 1
@@ -2324,7 +2324,7 @@ def get_all_manifests(limit: int = 10):
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("""
+    execute_query(cursor,"""
         SELECT id, version, created_at FROM file_manifests 
         ORDER BY created_at DESC 
         LIMIT ?
@@ -2356,7 +2356,7 @@ def create_integrity_alert(alert_type: str, severity: str, message: str,
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("""
+    execute_query(cursor,"""
         INSERT INTO integrity_alerts (alert_type, severity, file_path, message)
         VALUES (?, ?, ?, ?)
     """, (alert_type, severity, file_path, message))
@@ -2380,14 +2380,14 @@ def get_integrity_alerts(resolved: bool = None, limit: int = 50):
     cursor = conn.cursor()
     
     if resolved is not None:
-        cursor.execute("""
+        execute_query(cursor,"""
             SELECT * FROM integrity_alerts 
             WHERE resolved = ?
             ORDER BY created_at DESC 
             LIMIT ?
         """, (1 if resolved else 0, limit))
     else:
-        cursor.execute("""
+        execute_query(cursor,"""
             SELECT * FROM integrity_alerts 
             ORDER BY created_at DESC 
             LIMIT ?
@@ -2420,7 +2420,7 @@ def resolve_integrity_alert(alert_id: int):
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("""
+    execute_query(cursor,"""
         UPDATE integrity_alerts 
         SET resolved = 1, resolved_at = CURRENT_TIMESTAMP
         WHERE id = ?
@@ -2441,11 +2441,11 @@ def get_integrity_statistics():
     cursor = conn.cursor()
     
     # Total checks
-    cursor.execute("SELECT COUNT(*) FROM integrity_logs")
+    execute_query(cursor,"SELECT COUNT(*) FROM integrity_logs")
     total_checks = cursor.fetchone()[0]
     
     # Checks by status
-    cursor.execute("""
+    execute_query(cursor,"""
         SELECT status, COUNT(*) as count 
         FROM integrity_logs 
         GROUP BY status
@@ -2453,11 +2453,11 @@ def get_integrity_statistics():
     status_counts = {row[0]: row[1] for row in cursor.fetchall()}
     
     # Active alerts
-    cursor.execute("SELECT COUNT(*) FROM integrity_alerts WHERE resolved = 0")
+    execute_query(cursor,"SELECT COUNT(*) FROM integrity_alerts WHERE resolved = 0")
     active_alerts = cursor.fetchone()[0]
     
     # Recent compromised files (last 24 hours)
-    cursor.execute("""
+    execute_query(cursor,"""
         SELECT COUNT(DISTINCT file_path) 
         FROM integrity_logs 
         WHERE status IN ('MODIFIED', 'MISSING') 
@@ -2466,7 +2466,7 @@ def get_integrity_statistics():
     recent_compromised = cursor.fetchone()[0]
     
     # Total manifests
-    cursor.execute("SELECT COUNT(*) FROM file_manifests")
+    execute_query(cursor,"SELECT COUNT(*) FROM file_manifests")
     total_manifests = cursor.fetchone()[0]
     
     conn.close()
@@ -2493,7 +2493,7 @@ def delete_old_integrity_logs(days: int = 30):
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("""
+    execute_query(cursor,"""
         DELETE FROM integrity_logs 
         WHERE timestamp < datetime('now', '-' || ? || ' days')
     """, (days,))
@@ -2729,7 +2729,7 @@ def log_update_attempt(
     
     now = datetime.now().isoformat()
     
-    cursor.execute("""
+    execute_query(cursor,"""
         INSERT INTO update_history (
             from_version, to_version, update_type, status,
             started_at, download_size_bytes, release_notes
@@ -2768,7 +2768,7 @@ def update_history_status(
     now = datetime.now().isoformat()
     
     # Calculate duration
-    cursor.execute("SELECT started_at FROM update_history WHERE id = ?", (update_id,))
+    execute_query(cursor,"SELECT started_at FROM update_history WHERE id = ?", (update_id,))
     row = cursor.fetchone()
     
     duration_seconds = None
@@ -2776,7 +2776,7 @@ def update_history_status(
         started_at = datetime.fromisoformat(row[0])
         duration_seconds = int((datetime.now() - started_at).total_seconds())
     
-    cursor.execute("""
+    execute_query(cursor,"""
         UPDATE update_history
         SET status = ?,
             completed_at = ?,
@@ -2806,7 +2806,7 @@ def get_update_history(limit: int = 50) -> List[Dict[str, Any]]:
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("""
+    execute_query(cursor,"""
         SELECT 
             id, from_version, to_version, update_type, status,
             started_at, completed_at, duration_seconds,
@@ -2851,7 +2851,7 @@ def get_last_successful_update() -> Optional[Dict[str, Any]]:
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("""
+    execute_query(cursor,"""
         SELECT 
             id, from_version, to_version, update_type,
             completed_at, duration_seconds
@@ -2888,23 +2888,23 @@ def get_update_statistics() -> Dict[str, Any]:
     cursor = conn.cursor()
     
     # Total updates
-    cursor.execute("SELECT COUNT(*) FROM update_history")
+    execute_query(cursor,"SELECT COUNT(*) FROM update_history")
     total = cursor.fetchone()[0]
     
     # Successful updates
-    cursor.execute("SELECT COUNT(*) FROM update_history WHERE status = 'completed'")
+    execute_query(cursor,"SELECT COUNT(*) FROM update_history WHERE status = 'completed'")
     successful = cursor.fetchone()[0]
     
     # Failed updates
-    cursor.execute("SELECT COUNT(*) FROM update_history WHERE status = 'failed'")
+    execute_query(cursor,"SELECT COUNT(*) FROM update_history WHERE status = 'failed'")
     failed = cursor.fetchone()[0]
     
     # Rollbacks
-    cursor.execute("SELECT COUNT(*) FROM update_history WHERE rollback_performed = 1")
+    execute_query(cursor,"SELECT COUNT(*) FROM update_history WHERE rollback_performed = 1")
     rollbacks = cursor.fetchone()[0]
     
     # Last update
-    cursor.execute("""
+    execute_query(cursor,"""
         SELECT to_version, completed_at 
         FROM update_history 
         WHERE status = 'completed' 
