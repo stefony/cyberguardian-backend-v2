@@ -567,7 +567,8 @@ def add_threat(
     description: str,
     details: Optional[Dict[str, Any]] = None,
     timestamp: Optional[str] = None,
-    confidence_score: float = 0.0  # ← ДОБАВИ ТОЗИ ПАРАМЕТЪР
+    confidence_score: float = 0.0,
+    organization_id: Optional[str] = None  # ✨ ДОБАВЕНО
 ) -> int:
     """
     Add a new threat to the database
@@ -583,9 +584,9 @@ def add_threat(
     
     cursor.execute("""
         INSERT INTO threats 
-        (timestamp, source_ip, threat_type, severity, description, status, details, confidence_score, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)
-    """, (threat_timestamp, source_ip, threat_type, severity, description, details_json, confidence_score, now, now))
+        (timestamp, source_ip, threat_type, severity, description, status, details, confidence_score, organization_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)
+    """, (threat_timestamp, source_ip, threat_type, severity, description, details_json, confidence_score, organization_id, now, now))
     
     threat_id = cursor.lastrowid
     conn.commit()
@@ -598,7 +599,8 @@ def get_threats(
     severity: Optional[str] = None,
     status: Optional[str] = None,
     limit: int = 100,
-    offset: int = 0
+    offset: int = 0,
+    organization_id: Optional[str] = None  # ✨ ДОБАВЕНО
 ) -> List[Dict[str, Any]]:
     """
     Get threats with optional filters
@@ -609,11 +611,16 @@ def get_threats(
     query = """
         SELECT id, timestamp, source_ip, threat_type, severity, 
                description, status, details, confidence_score, 
-               created_at, updated_at
+               organization_id, created_at, updated_at
         FROM threats 
         WHERE 1=1
     """
     params = []
+    
+    # ✨ ДОБАВЕНО: Organization filter
+    if organization_id:
+        query += " AND organization_id = ?"
+        params.append(organization_id)
     
     if severity:
         query += " AND severity = ?"
@@ -643,6 +650,7 @@ def get_threats(
             "status": row["status"],
             "details": json.loads(row["details"]) if row["details"] else None,
             "confidence_score": row["confidence_score"],
+            "organization_id": row["organization_id"],  # ✨ ДОБАВЕНО
             "created_at": row["created_at"],
             "updated_at": row["updated_at"]
         }
