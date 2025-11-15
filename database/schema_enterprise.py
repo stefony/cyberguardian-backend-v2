@@ -61,7 +61,7 @@ def init_enterprise_tables():
         # ============================================
         execute_query(cursor, """
             CREATE TABLE IF NOT EXISTS roles (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 name TEXT NOT NULL UNIQUE,
                 display_name TEXT NOT NULL,
                 description TEXT,
@@ -77,7 +77,7 @@ def init_enterprise_tables():
         # ============================================
         execute_query(cursor, """
             CREATE TABLE IF NOT EXISTS user_roles (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 user_id TEXT NOT NULL,
                 organization_id TEXT NOT NULL,
                 role_id INTEGER NOT NULL,
@@ -95,7 +95,7 @@ def init_enterprise_tables():
         # ============================================
         execute_query(cursor, """
             CREATE TABLE IF NOT EXISTS permissions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 resource TEXT NOT NULL,
                 action TEXT NOT NULL,
                 description TEXT,
@@ -109,7 +109,7 @@ def init_enterprise_tables():
         # ============================================
         execute_query(cursor, """
             CREATE TABLE IF NOT EXISTS organization_invites (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 organization_id TEXT NOT NULL,
                 email TEXT NOT NULL,
                 role_id INTEGER NOT NULL,
