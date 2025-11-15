@@ -20,8 +20,10 @@ from database.db_multitenancy import (
 from database.db import (
     get_threat_by_id as db_get_threat_by_id,
     update_threat_status as db_update_threat_status,
-    get_threat_correlations
+    get_threat_correlations,
+    get_connection
 )
+from database.postgres import execute_query  # ✨ ADDED
 from middleware.tenant_context import (
     require_organization,
     get_current_organization,
@@ -402,10 +404,10 @@ async def batch_threat_action(
                         reason=batch.reason
                     )
                 elif batch.action == "delete":
-                    import sqlite3
-                    conn = sqlite3.connect('database/cyberguardian.db')
+                    # ✨ FIXED: Use execute_query instead of direct cursor.execute
+                    conn = get_connection()
                     cursor = conn.cursor()
-                    cursor.execute("DELETE FROM threats WHERE id = ?", (threat_id,))
+                    execute_query(cursor, "DELETE FROM threats WHERE id = ?", (threat_id,))
                     conn.commit()
                     conn.close()
                     success = True

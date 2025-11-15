@@ -15,7 +15,8 @@ from typing import List, Optional
 from datetime import datetime, timedelta
 from fastapi import Request
 from middleware.rate_limiter import limiter, READ_LIMIT
-import sqlite3
+from database.db import get_connection
+from database.postgres import execute_query, execute_many
 
 # ============================================
 # PYDANTIC MODELS
@@ -55,12 +56,6 @@ class OverviewStats(BaseModel):
 # HELPER FUNCTIONS
 # ============================================
 
-def get_db_connection():
-    """Get database connection"""
-    conn = sqlite3.connect('database/cyberguardian.db')
-    conn.row_factory = sqlite3.Row
-    return conn
-
 def get_date_range(days: int = 7):
     """Get date range for queries"""
     end_date = datetime.now()
@@ -76,11 +71,11 @@ def initialize_sample_analytics_data():
     Add sample data for analytics if tables are empty
     """
     try:
-        conn = get_db_connection()
+        conn = get_connection()
         cursor = conn.cursor()
         
         # Check if scans table has data
-        cursor.execute("SELECT COUNT(*) FROM scans")
+        execute_query(cursor, "SELECT COUNT(*) FROM scans")
         scans_count = cursor.fetchone()[0]
         
         if scans_count == 0:
@@ -93,7 +88,8 @@ def initialize_sample_analytics_data():
                 ("2025-01-12 16:30:00", "file", "completed", 1),
             ]
             
-            cursor.executemany(
+            execute_many(
+                cursor,
                 """INSERT INTO scans (started_at, scan_type, status, threats_found)
                    VALUES (?, ?, ?, ?)""",
                 sample_scans
@@ -101,7 +97,7 @@ def initialize_sample_analytics_data():
             print("✅ Sample scans data initialized")
         
         # Check if honeypot_logs table has data
-        cursor.execute("SELECT COUNT(*) FROM honeypot_logs")
+        execute_query(cursor, "SELECT COUNT(*) FROM honeypot_logs")
         logs_count = cursor.fetchone()[0]
         
         if logs_count == 0:
@@ -117,7 +113,8 @@ def initialize_sample_analytics_data():
                 (2, "2025-01-11 09:45:00", "203.0.113.11", "connection_attempt", "HTTP scanning"),
             ]
             
-            cursor.executemany(
+            execute_many(
+                cursor,
                 """INSERT INTO honeypot_logs (honeypot_id, timestamp, source_ip, action, details)
                    VALUES (?, ?, ?, ?, ?)""",
                 sample_logs
@@ -149,42 +146,42 @@ async def get_overview_stats(request: Request):
     Returns comprehensive statistics across all modules
     """
     try:
-        conn = get_db_connection()
+        conn = get_connection()
         cursor = conn.cursor()
         
         # Threats stats
-        cursor.execute("SELECT COUNT(*) FROM threats")
+        execute_query(cursor, "SELECT COUNT(*) FROM threats")
         total_threats = cursor.fetchone()[0]
         
-        cursor.execute("SELECT COUNT(*) FROM threats WHERE status = 'active'")
+        execute_query(cursor, "SELECT COUNT(*) FROM threats WHERE status = ?", ('active',))
         active_threats = cursor.fetchone()[0]
         
-        cursor.execute("SELECT COUNT(*) FROM threats WHERE status = 'blocked'")
+        execute_query(cursor, "SELECT COUNT(*) FROM threats WHERE status = ?", ('blocked',))
         blocked_threats = cursor.fetchone()[0]
         
         # Scans stats
-        cursor.execute("SELECT COUNT(*) FROM scans")
+        execute_query(cursor, "SELECT COUNT(*) FROM scans")
         total_scans = cursor.fetchone()[0]
         
-        cursor.execute("SELECT COUNT(*) FROM scans WHERE status = 'completed'")
+        execute_query(cursor, "SELECT COUNT(*) FROM scans WHERE status = ?", ('completed',))
         successful_scans = cursor.fetchone()[0]
         
         # Honeypots stats
-        cursor.execute("SELECT COUNT(*) FROM honeypots")
+        execute_query(cursor, "SELECT COUNT(*) FROM honeypots")
         total_honeypots = cursor.fetchone()[0]
         
-        cursor.execute("SELECT COUNT(*) FROM honeypots WHERE status = 'active'")
+        execute_query(cursor, "SELECT COUNT(*) FROM honeypots WHERE status = ?", ('active',))
         active_honeypots = cursor.fetchone()[0]
         
-        cursor.execute("SELECT COUNT(*) FROM honeypot_logs")
+        execute_query(cursor, "SELECT COUNT(*) FROM honeypot_logs")
         total_interactions = cursor.fetchone()[0]
         
         # Today's stats
         today = datetime.now().strftime('%Y-%m-%d')
-        cursor.execute("SELECT COUNT(*) FROM threats WHERE DATE(timestamp) = ?", (today,))
+        execute_query(cursor, "SELECT COUNT(*) FROM threats WHERE DATE(timestamp) = ?", (today,))
         threats_today = cursor.fetchone()[0]
         
-        cursor.execute("SELECT COUNT(*) FROM scans WHERE DATE(started_at) = ?", (today,))
+        execute_query(cursor, "SELECT COUNT(*) FROM scans WHERE DATE(started_at) = ?", (today,))
         scans_today = cursor.fetchone()[0]
         
         conn.close()
@@ -213,7 +210,7 @@ async def get_threats_timeline(request: Request, days: int = Query(7, ge=1, le=9
     Get threats timeline (threats detected over time)
     """
     try:
-        conn = get_db_connection()
+        conn = get_connection()
         cursor = conn.cursor()
 
         start_date, end_date = get_date_range(days)
@@ -226,7 +223,7 @@ async def get_threats_timeline(request: Request, days: int = Query(7, ge=1, le=9
             ORDER BY date ASC
         """
 
-        cursor.execute(query, (start_date, end_date))
+        execute_query(cursor, query, (start_date, end_date))
         results = cursor.fetchall()
 
         timeline = [
@@ -252,7 +249,7 @@ async def get_detection_stats(request: Request):
     Get detection method statistics
     """
     try:
-        conn = get_db_connection()
+        conn = get_connection()
         cursor = conn.cursor()
 
         query = """
@@ -261,7 +258,7 @@ async def get_detection_stats(request: Request):
             GROUP BY scan_type
         """
 
-        cursor.execute(query)
+        execute_query(cursor, query)
         results = cursor.fetchall()
 
         total = sum(row["count"] for row in results)
@@ -293,7 +290,7 @@ async def get_honeypot_activity(request: Request, days: int = Query(7, ge=1, le=
     Get honeypot interaction timeline
     """
     try:
-        conn = get_db_connection()
+        conn = get_connection()
         cursor = conn.cursor()
 
         start_date, end_date = get_date_range(days)
@@ -306,7 +303,7 @@ async def get_honeypot_activity(request: Request, days: int = Query(7, ge=1, le=
             ORDER BY date ASC
         """
 
-        cursor.execute(query, (start_date, end_date))
+        execute_query(cursor, query, (start_date, end_date))
         results = cursor.fetchall()
 
         activity = [
@@ -332,7 +329,7 @@ async def get_top_threats(request: Request, limit: int = Query(5, ge=1, le=20)):
     Get top threats by count
     """
     try:
-        conn = get_db_connection()
+        conn = get_connection()
         cursor = conn.cursor()
 
         query = """
@@ -343,7 +340,7 @@ async def get_top_threats(request: Request, limit: int = Query(5, ge=1, le=20)):
             LIMIT ?
         """
 
-        cursor.execute(query, (limit,))
+        execute_query(cursor, query, (limit,))
         results = cursor.fetchall()
 
         top_threats = [
@@ -379,36 +376,36 @@ async def get_security_posture(request: Request):
     - Recent scan success rate
     """
     try:
-        conn = get_db_connection()
+        conn = get_connection()
         cursor = conn.cursor()
         
         # Base score
         score = 100
         
         # 1. Active threats penalty (-5 per active threat, max -30)
-        cursor.execute("SELECT COUNT(*) FROM threats WHERE status = 'active'")
+        execute_query(cursor, "SELECT COUNT(*) FROM threats WHERE status = ?", ('active',))
         active_threats = cursor.fetchone()[0]
         score -= min(active_threats * 5, 30)
         
         # 2. Critical threats penalty (-10 per critical threat, max -20)
-        cursor.execute("SELECT COUNT(*) FROM threats WHERE severity = 'critical' AND status = 'active'")
+        execute_query(cursor, "SELECT COUNT(*) FROM threats WHERE severity = ? AND status = ?", ('critical', 'active'))
         critical_threats = cursor.fetchone()[0]
         score -= min(critical_threats * 10, 20)
         
         # 3. Protection status bonus (+10 if enabled)
-        cursor.execute("SELECT enabled FROM protection_settings WHERE id = 1")
+        execute_query(cursor, "SELECT enabled FROM protection_settings WHERE id = ?", (1,))
         protection_row = cursor.fetchone()
         protection_enabled = protection_row[0] if protection_row else 0
         if protection_enabled:
             score += 10
         
         # 4. Active honeypots bonus (+2 per active honeypot, max +10)
-        cursor.execute("SELECT COUNT(*) FROM honeypots WHERE status = 'active'")
+        execute_query(cursor, "SELECT COUNT(*) FROM honeypots WHERE status = ?", ('active',))
         active_honeypots = cursor.fetchone()[0]
         score += min(active_honeypots * 2, 10)
         
         # 5. Recent scan success rate
-        cursor.execute("""
+        execute_query(cursor, """
             SELECT COUNT(*) as total,
                    SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as successful
             FROM scan_history
@@ -469,10 +466,10 @@ async def get_recent_incidents(request: Request, limit: int = Query(5, ge=1, le=
     Returns the most recent threats ordered by timestamp
     """
     try:
-        conn = get_db_connection()
+        conn = get_connection()
         cursor = conn.cursor()
         
-        cursor.execute("""
+        execute_query(cursor, """
             SELECT 
                 id,
                 timestamp,
