@@ -41,6 +41,9 @@ from api.organizations import router as organizations_router
 from api.roles import router as roles_router
 from api.users_enterprise import router as users_enterprise_router
 
+# ✨ TEMPORARY: Admin endpoint for DB initialization
+from api.admin import router as admin_router
+
 # ============================================
 # Logging (set up BEFORE app creation)
 # ============================================
@@ -176,6 +179,9 @@ app.include_router(health_router, prefix="/api", tags=["Health"])
 # Authentication - STRICT rate limit (applied in auth.py router)
 app.include_router(auth_router, prefix="/api", tags=["Authentication"])
 
+# ✨ TEMPORARY: Admin endpoint for DB initialization
+app.include_router(admin_router, tags=["Admin"])
+
 # Feature routers
 app.include_router(threats_router, prefix="/api", tags=["Threats"])
 app.include_router(detection_router, prefix="/api", tags=["Detection"])
@@ -221,6 +227,7 @@ async def root():
         "status": "✅ Enterprise-Ready with Multi-tenant & RBAC",
         "docs": "/docs",
         "health": "/api/health",
+        "admin_init": "/api/admin/init-db",  # ✨ TEMPORARY
         "threats": "/api/threats",
         "detection": "/api/detection",
         "deception": "/api/deception",
