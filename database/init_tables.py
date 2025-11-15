@@ -424,7 +424,7 @@ def init_database(conn):
             to_version TEXT NOT NULL,
             update_type TEXT,
             status TEXT NOT NULL,
-            started_at TEXT NOT NULL DEFAULT (datetime('now')),
+            started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             completed_at TEXT,
             duration_seconds INTEGER,
             error_message TEXT,
