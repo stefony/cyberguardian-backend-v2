@@ -35,7 +35,7 @@ from api.process_protection import router as process_protection_router
 from api.updates import router as updates_router
 from api.configuration import router as configuration_router
 from api.performance import router as performance_router  # ✨ NEW: Performance monitoring
-
+from middleware.auth_middleware import auth_middleware
 
 
 # ============================================
@@ -140,6 +140,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ============================================
+# Auth Middleware (AFTER CORS, BEFORE other middlewares)
+# ============================================
+app.middleware("http")(auth_middleware)
 
 # ============================================
 # Other middlewares (AFTER CORS)
