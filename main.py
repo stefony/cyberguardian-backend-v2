@@ -36,14 +36,6 @@ from api.updates import router as updates_router
 from api.configuration import router as configuration_router
 from api.performance import router as performance_router
 
-# ✨ PHASE 7: Enterprise Features
-from api.organizations import router as organizations_router
-from api.roles import router as roles_router
-from api.users_enterprise import router as users_enterprise_router
-
-# ✨ TEMPORARY: Admin endpoint for DB initialization
-from api.admin import router as admin_router
-
 # ============================================
 # Logging (set up BEFORE app creation)
 # ============================================
@@ -53,10 +45,6 @@ from middleware.logging_middleware import LoggingMiddleware
 # Rate Limiting
 from middleware.rate_limiter import limiter, rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-
-# ✨ PHASE 7: Middleware
-from middleware.auth_middleware import auth_middleware  # Extract user_id from JWT
-from middleware.tenant_context import tenant_context_middleware  # Multi-tenant context
 
 # Initialize admin user on startup
 from database.init_admin import init_admin_user
@@ -96,14 +84,6 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"⚠️  Performance monitoring failed to start: {e}")
 
-    # ✨ Initialize enterprise database
-    try:
-        from database.schema_enterprise import init_enterprise_tables
-        init_enterprise_tables()
-        print("🏢 Enterprise Features: ENABLED (Multi-tenant & RBAC)")
-    except Exception as e:
-        print(f"⚠️  Enterprise initialization failed: {e}")
-
     yield
 
     # Shutdown
@@ -124,8 +104,8 @@ async def lifespan(app: FastAPI):
 # Initialize FastAPI app
 app = FastAPI(
     title="CyberGuardian AI",
-    description="Advanced AI-Powered Cybersecurity Platform with Enterprise Features",
-    version="1.5.0",  # ✨ Updated version for Phase 7
+    description="Advanced AI-Powered Cybersecurity Platform with Rate Limiting",
+    version="1.4.0",
     lifespan=lifespan,
 )
 
@@ -158,14 +138,6 @@ app.add_middleware(
 # ============================================
 app.add_middleware(LoggingMiddleware)
 
-# ✨ PHASE 7: Auth & Tenant Context (ORDER IS CRITICAL!)
-# ВАЖНО: Middleware се изпълняват в ОБРАТЕН РЕД на регистрацията!
-# Регистрираме tenant ПЪРВО, за да се изпълни ПОСЛЕДНО
-app.middleware("http")(tenant_context_middleware)
-
-# Регистрираме auth ВТОРО, за да се изпълни ПЪРВО  
-app.middleware("http")(auth_middleware)
-
 # Rate Limiting
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
@@ -178,9 +150,6 @@ app.include_router(health_router, prefix="/api", tags=["Health"])
 
 # Authentication - STRICT rate limit (applied in auth.py router)
 app.include_router(auth_router, prefix="/api", tags=["Authentication"])
-
-# ✨ TEMPORARY: Admin endpoint for DB initialization
-app.include_router(admin_router, tags=["Admin"])
 
 # Feature routers
 app.include_router(threats_router, prefix="/api", tags=["Threats"])
@@ -209,11 +178,6 @@ app.include_router(updates_router)
 app.include_router(configuration_router)
 app.include_router(performance_router, tags=["Performance"])
 
-# ✨ PHASE 7: Enterprise Features
-app.include_router(organizations_router, tags=["Organizations"])  # /api/organizations
-app.include_router(roles_router, tags=["Roles"])                  # /api/roles
-app.include_router(users_enterprise_router, tags=["Users"])       # /api/users
-
 
 # ============================================
 # Root
@@ -223,11 +187,10 @@ async def root():
     """Root endpoint - API info"""
     return {
         "message": "CyberGuardian AI API",
-        "version": "1.5.0",
-        "status": "✅ Enterprise-Ready with Multi-tenant & RBAC",
+        "version": "1.4.0",
+        "status": "✅ Protected with Rate Limiting & Logging",
         "docs": "/docs",
         "health": "/api/health",
-        "admin_init": "/api/admin/init-db",  # ✨ TEMPORARY
         "threats": "/api/threats",
         "detection": "/api/detection",
         "deception": "/api/deception",
@@ -241,10 +204,6 @@ async def root():
         "threat_intel": "/api/threat-intel",
         "remediation": "/api/remediation",
         "performance": "/api/performance",
-        # ✨ PHASE 7: Enterprise endpoints
-        "organizations": "/api/organizations",
-        "roles": "/api/roles",
-        "users": "/api/users",
         "ws": "/ws",
     }
 
