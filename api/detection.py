@@ -15,6 +15,8 @@ from typing import List, Optional
 from datetime import datetime
 import os
 import tempfile
+import hashlib
+import logging
 from pathlib import Path
 from middleware.rate_limiter import limiter, THREAT_INTEL_LIMIT, WRITE_LIMIT
 
@@ -27,6 +29,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 from database.db import add_scan, get_scans, get_scan_by_id, get_detection_stats
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # ============================================
 # PYDANTIC MODELS
@@ -112,7 +115,7 @@ async def get_status(request: Request):
 
 @router.post("/detection/scan")
 @limiter.limit(WRITE_LIMIT)  # 30 requests per minute
-async def start_scan(request: Request, scan_type: str):
+async def start_scan(request: Request, file: UploadFile = File(...)):
     """
     Upload and scan a file with VirusTotal
 
@@ -220,50 +223,100 @@ async def start_scan(request: Request, scan_type: str):
 @limiter.limit(WRITE_LIMIT)  # 30 requests per minute
 async def scan_uploaded_file(request: Request, file: UploadFile = File(...)):
     """
-    Start a detection scan
-
+    Upload and scan a file for threats
+    
     Args:
-        scan_type: Type of scan (quick, full, network, custom)
-        request: Optional scan parameters
-
+        file: File to scan
+        
     Returns:
-        Scan initiation response
+        Scan results with threat detection
     """
     try:
-        # Validate scan type
-        valid_types = ["quick", "full", "network", "custom"]
-        if scan_type not in valid_types:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid scan type. Must be one of: {', '.join(valid_types)}",
-            )
-
-        # For now, create a simulated scan entry
-        # In a real implementation, this would start an actual scan process
-        start_time = datetime.now()
-
+        # Validate file
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="No file provided")
+        
+        # Create temp file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as tmp:
+            content = await file.read()
+            tmp.write(content)
+            tmp_path = tmp.name
+        
+        # Scan the file (simplified - in real system would use ML models)
+        file_size = len(content)
+        file_hash = hashlib.sha256(content).hexdigest()
+        
+        # Simple threat detection (check file size, hash, etc.)
+        is_threat = False
+        threat_score = 0.0
+        indicators = []
+        
+        # Check file size (files > 10MB might be suspicious)
+        if file_size > 10 * 1024 * 1024:
+            threat_score += 20
+            indicators.append("Large file size")
+        
+        # Check for executable extensions
+        dangerous_extensions = ['.exe', '.dll', '.bat', '.cmd', '.ps1', '.vbs', '.js']
+        if any(file.filename.lower().endswith(ext) for ext in dangerous_extensions):
+            threat_score += 40
+            indicators.append("Executable file type")
+            is_threat = True
+        
+        # Determine threat level
+        if threat_score >= 80:
+            threat_level = "critical"
+        elif threat_score >= 60:
+            threat_level = "high"
+        elif threat_score >= 40:
+            threat_level = "medium"
+        else:
+            threat_level = "low"
+        
+        # Clean up temp file
+        try:
+            os.unlink(tmp_path)
+        except:
+            pass
+        
         # Add scan to database
+        start_time = datetime.now()
         scan_id = add_scan(
-            scan_type=scan_type,
-            status="running",
+            scan_type="file_upload",
+            status="completed",
             started_at=start_time.isoformat(),
-            items_scanned=0,
-            threats_found=0,
+            completed_at=start_time.isoformat(),
+            duration_seconds=0,
+            items_scanned=1,
+            threats_found=1 if is_threat else 0,
+            results={
+                "filename": file.filename,
+                "file_size": file_size,
+                "file_hash": file_hash,
+                "threat_detected": is_threat,
+                "threat_score": threat_score,
+                "threat_level": threat_level,
+                "indicators": indicators
+            }
         )
-
+        
         return {
             "success": True,
             "scan_id": scan_id,
-            "scan_type": scan_type,
-            "status": "running",
-            "started_at": start_time.isoformat(),
-            "message": f"{scan_type.capitalize()} scan initiated successfully",
+            "filename": file.filename,
+            "file_size": file_size,
+            "file_hash": file_hash,
+            "threat_detected": is_threat,
+            "threat_score": threat_score,
+            "threat_level": threat_level,
+            "indicators": indicators,
+            "scanned_at": start_time.isoformat(),
+            "message": f"File scanned successfully - {'THREAT DETECTED' if is_threat else 'Clean'}"
         }
-
-    except HTTPException:
-        raise
+        
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to start scan: {str(e)}")
+        logger.error(f"Error scanning uploaded file: {e}")
+        raise HTTPException(status_code=500, detail=f"Scan failed: {str(e)}")
 
 
 @router.get("/detection/scans", response_model=List[ScanResult])
@@ -307,9 +360,9 @@ async def get_all_scans(
         raise HTTPException(status_code=500, detail=f"Failed to get scans: {str(e)}")
 
 
-@router.get("/detection/stats")
+@router.get("/detection/scans/{scan_id}", response_model=ScanResult)
 @limiter.limit(THREAT_INTEL_LIMIT)  # 60 requests per minute
-async def get_stats(request: Request):
+async def get_scan(request: Request, scan_id: int):
     """
     Get specific scan details
 
@@ -343,9 +396,9 @@ async def get_stats(request: Request):
         raise HTTPException(status_code=500, detail=f"Failed to get scan: {str(e)}")
 
 
-@router.get("/detection/scans/{scan_id}", response_model=ScanResult)
+@router.get("/detection/stats")
 @limiter.limit(THREAT_INTEL_LIMIT)  # 60 requests per minute
-async def get_scan(request: Request, scan_id: int):
+async def get_stats(request: Request):
     """
     Get detection statistics
 
