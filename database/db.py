@@ -21,8 +21,13 @@ import requests
 
 def get_ip_geolocation(ip: str) -> Dict[str, Any]:
     """
-    Get geolocation data for an IP address using ip-api.com
-    Returns: dict with country, city, lat, lon
+    Get geolocation data for an IP address using multiple APIs with fallback
+    
+    APIs used (in order):
+    1. ip-api.com (primary)
+    2. ipinfo.io (fallback)
+    
+    Returns: dict with country, city, latitude, longitude
     """
     try:
         # Skip private/local IPs
@@ -34,7 +39,34 @@ def get_ip_geolocation(ip: str) -> Dict[str, Any]:
                 "longitude": 0.0
             }
         
-        # Call ip-api.com (free, no API key needed)
+        # Try primary API: ip-api.com
+        result = _get_geolocation_ipapi(ip)
+        if result["country"] != "Unknown":
+            return result
+        
+        # Fallback to ipinfo.io
+        result = _get_geolocation_ipinfo(ip)
+        if result["country"] != "Unknown":
+            return result
+        
+    except Exception as e:
+        print(f"⚠️ Geolocation lookup failed for {ip}: {e}")
+    
+    # Ultimate fallback
+    return {
+        "country": "Unknown",
+        "city": "Unknown",
+        "latitude": 0.0,
+        "longitude": 0.0
+    }
+
+
+def _get_geolocation_ipapi(ip: str) -> Dict[str, Any]:
+    """
+    Primary geolocation provider: ip-api.com (free, no API key)
+    Rate limit: 45 requests/minute
+    """
+    try:
         response = requests.get(
             f"http://ip-api.com/json/{ip}?fields=status,country,city,lat,lon",
             timeout=3
@@ -50,16 +82,36 @@ def get_ip_geolocation(ip: str) -> Dict[str, Any]:
                     "longitude": data.get("lon", 0.0)
                 }
     except Exception as e:
-        print(f"⚠️ Geolocation lookup failed for {ip}: {e}")
+        print(f"⚠️ ip-api.com failed: {e}")
     
-    # Fallback
-    return {
-        "country": "Unknown",
-        "city": "Unknown",
-        "latitude": 0.0,
-        "longitude": 0.0
-    }
+    return {"country": "Unknown", "city": "Unknown", "latitude": 0.0, "longitude": 0.0}
 
+
+def _get_geolocation_ipinfo(ip: str) -> Dict[str, Any]:
+    """
+    Fallback geolocation provider: ipinfo.io (free, no API key)
+    Rate limit: 50,000 requests/month
+    """
+    try:
+        response = requests.get(
+            f"https://ipinfo.io/{ip}/json",
+            timeout=3
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            loc = data.get("loc", "0,0").split(",")
+            
+            return {
+                "country": data.get("country", "Unknown"),
+                "city": data.get("city", "Unknown"),
+                "latitude": float(loc[0]) if len(loc) > 0 else 0.0,
+                "longitude": float(loc[1]) if len(loc) > 1 else 0.0
+            }
+    except Exception as e:
+        print(f"⚠️ ipinfo.io failed: {e}")
+    
+    return {"country": "Unknown", "city": "Unknown", "latitude": 0.0, "longitude": 0.0}
 
 def get_connection():
     """Get database connection"""
