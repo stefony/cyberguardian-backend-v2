@@ -149,9 +149,16 @@ async def start_scan(request: Request, file: UploadFile = File(...)):
         # Start scan
         start_time = datetime.now()
 
-        # Scan with VirusTotal
-        with FileScanner() as scanner:
-            scan_result = scanner.scan_file(temp_path)
+        # ✅ FIX: Scan with VirusTotal in thread pool to avoid event loop conflict
+        import asyncio
+        
+        def _scan_file_sync(path: str):
+            """Helper function to run sync VirusTotal scan in thread"""
+            with FileScanner() as scanner:
+                return scanner.scan_file(path)
+        
+        # Run blocking VirusTotal call in thread pool
+        scan_result = await asyncio.to_thread(_scan_file_sync, temp_path)
 
         end_time = datetime.now()
         duration = (end_time - start_time).total_seconds()
@@ -217,7 +224,6 @@ async def start_scan(request: Request, file: UploadFile = File(...)):
                 os.unlink(temp_path)
             except:
                 pass
-
 
 @router.post("/detection/scan/upload")
 @limiter.limit(WRITE_LIMIT)  # 30 requests per minute
