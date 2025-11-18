@@ -287,13 +287,13 @@ async def start_scan_with_profile(request: Request, profile_name: str):
         history_id = add_scan_history(
             schedule_id=None,
             scan_type=profile["scan_type"],
-            target_path="C:\\",
+             target_path="/tmp",
             started_at=started_at,
             status="running"
         )
         
         # Run scan DIRECTLY (not in background)
-        _execute_scan(history_id, profile["scan_type"], "C:\\")
+        _execute_scan(history_id, profile["scan_type"], "/tmp")
         
         return {
             "success": True,
