@@ -77,7 +77,7 @@ def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
         "error": "Rate limit exceeded",
         "message": f"Too many requests from {get_client_ip(request)}",
         "detail": str(exc.detail),
-        "retry_after": exc.headers.get("Retry-After", "60"),
+        "retry_after": exc.headers.get("Retry-After", "60") if exc.headers else "60",
         "type": "rate_limit"
     }
 

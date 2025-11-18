@@ -4,7 +4,7 @@ SQLite database management for threats and system data
 """
 
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 import json
@@ -409,19 +409,21 @@ def init_database():
     
     # Users table
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id TEXT PRIMARY KEY,
-            email TEXT UNIQUE NOT NULL,
-            username TEXT UNIQUE NOT NULL,
-            hashed_password TEXT NOT NULL,
-            is_active INTEGER NOT NULL DEFAULT 1,
-            is_verified INTEGER NOT NULL DEFAULT 0,
-            is_admin INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL,
-            updated_at TEXT,
-            last_login TEXT,
-            full_name TEXT,
-            company TEXT
+         CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        email TEXT UNIQUE NOT NULL,
+        username TEXT UNIQUE NOT NULL,
+        hashed_password TEXT NOT NULL,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        is_verified INTEGER NOT NULL DEFAULT 0,
+        is_admin INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT,
+        last_login TEXT,
+        full_name TEXT,
+        company TEXT,
+        failed_login_attempts INTEGER NOT NULL DEFAULT 0,
+        locked_until TEXT
         )
     """)
     cursor.execute("""
@@ -1293,6 +1295,134 @@ def update_last_login(user_id: str):
     
     conn.commit()
     conn.close()
+    
+    # ========== BRUTE FORCE PROTECTION FUNCTIONS ==========
+
+def increment_failed_login(email: str) -> int:
+    """
+    Increment failed login attempts
+    Returns: current failed attempts count
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    now = datetime.now().isoformat()
+    
+    cursor.execute("""
+        UPDATE users 
+        SET failed_login_attempts = failed_login_attempts + 1,
+            updated_at = ?
+        WHERE email = ?
+    """, (now, email))
+    
+    # Get current count
+    cursor.execute("SELECT failed_login_attempts FROM users WHERE email = ?", (email,))
+    row = cursor.fetchone()
+    
+    count = row["failed_login_attempts"] if row else 0
+    
+    conn.commit()
+    conn.close()
+    
+    return count
+
+
+def reset_failed_login(email: str):
+    """Reset failed login attempts on successful login"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    now = datetime.now().isoformat()
+    
+    cursor.execute("""
+        UPDATE users 
+        SET failed_login_attempts = 0,
+            locked_until = NULL,
+            updated_at = ?
+        WHERE email = ?
+    """, (now, email))
+    
+    conn.commit()
+    conn.close()
+
+
+def lock_account(email: str, duration_minutes: int = 15):
+    """
+    Lock account for specified duration
+    
+    Args:
+        email: User email
+        duration_minutes: Lock duration in minutes (default 15)
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    now = datetime.now()
+    locked_until = (now + timedelta(minutes=duration_minutes)).isoformat()
+    
+    cursor.execute("""
+        UPDATE users 
+        SET locked_until = ?,
+            updated_at = ?
+        WHERE email = ?
+    """, (locked_until, now.isoformat(), email))
+    
+    conn.commit()
+    conn.close()
+    
+    logger.warning(f"🔒 Account locked: {email} until {locked_until}")
+
+
+def is_account_locked(email: str) -> bool:
+    """
+    Check if account is currently locked
+    
+    Returns: True if locked, False if unlocked or lock expired
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT locked_until FROM users WHERE email = ?", (email,))
+    row = cursor.fetchone()
+    
+    if not row or not row["locked_until"]:
+        conn.close()
+        return False
+    
+    locked_until = datetime.fromisoformat(row["locked_until"])
+    now = datetime.now()
+    
+    # Check if lock expired
+    if now >= locked_until:
+        # Auto-unlock
+        cursor.execute("""
+            UPDATE users 
+            SET locked_until = NULL,
+                failed_login_attempts = 0,
+                updated_at = ?
+            WHERE email = ?
+        """, (now.isoformat(), email))
+        conn.commit()
+        conn.close()
+        logger.info(f"🔓 Account auto-unlocked: {email}")
+        return False
+    
+    conn.close()
+    return True
+
+
+def get_failed_login_count(email: str) -> int:
+    """Get current failed login attempts count"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT failed_login_attempts FROM users WHERE email = ?", (email,))
+    row = cursor.fetchone()
+    
+    conn.close()
+    
+    return row["failed_login_attempts"] if row else 0
+    
 # ========== FS EVENTS FUNCTIONS ==========
 
 def add_fs_event(

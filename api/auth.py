@@ -25,6 +25,9 @@ from core.auth import (
 from fastapi import Request  # Добави Request към съществуващия FastAPI import
 from middleware.rate_limiter import limiter, AUTH_LIMIT
 
+from pydantic import BaseModel, EmailStr, validator, Field
+import re
+
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 # OAuth2 scheme for token authentication
@@ -35,10 +38,76 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 class RegisterRequest(BaseModel):
     email: EmailStr
-    username: str
-    password: str
-    full_name: Optional[str] = None
-    company: Optional[str] = None
+    username: str = Field(..., min_length=3, max_length=30, pattern=r'^[a-zA-Z0-9_]+$')
+    password: str = Field(..., min_length=8, max_length=128)
+    full_name: Optional[str] = Field(None, max_length=100)
+    company: Optional[str] = Field(None, max_length=100)
+    
+    @validator('password')
+    def validate_password(cls, v):
+        """
+        Password must contain:
+        - At least 8 characters
+        - At least one uppercase letter
+        - At least one lowercase letter
+        - At least one number
+        - At least one special character
+        """
+        if len(v) < 8:
+            raise ValueError('Password must be at least 8 characters long')
+        
+        if not re.search(r'[A-Z]', v):
+            raise ValueError('Password must contain at least one uppercase letter')
+        
+        if not re.search(r'[a-z]', v):
+            raise ValueError('Password must contain at least one lowercase letter')
+        
+        if not re.search(r'\d', v):
+            raise ValueError('Password must contain at least one number')
+        
+        if not re.search(r'[!@#$%^&*(),.?":{}|<>]', v):
+            raise ValueError('Password must contain at least one special character')
+        
+        return v
+    
+    @validator('username')
+    def validate_username(cls, v):
+        """Username must be alphanumeric with underscores only"""
+        if not re.match(r'^[a-zA-Z0-9_]+$', v):
+            raise ValueError('Username can only contain letters, numbers, and underscores')
+        
+        # Reserved usernames
+        reserved = ['admin', 'root', 'system', 'api', 'www', 'test']
+        if v.lower() in reserved:
+            raise ValueError('This username is reserved')
+        
+        return v
+    
+    @validator('full_name')
+    def validate_full_name(cls, v):
+        """Sanitize full name"""
+        if v is None:
+            return v
+        
+        # Remove any HTML/script tags
+        v = re.sub(r'<[^>]+>', '', v)
+        
+        # Only allow letters, spaces, hyphens, apostrophes
+        if not re.match(r"^[a-zA-Z\s\-']+$", v):
+            raise ValueError('Full name can only contain letters, spaces, hyphens, and apostrophes')
+        
+        return v.strip()
+    
+    @validator('company')
+    def validate_company(cls, v):
+        """Sanitize company name"""
+        if v is None:
+            return v
+        
+        # Remove any HTML/script tags
+        v = re.sub(r'<[^>]+>', '', v)
+        
+        return v.strip()
 
 
 class LoginRequest(BaseModel):
@@ -158,12 +227,28 @@ async def register(request: Request, data: RegisterRequest):
 @limiter.limit(AUTH_LIMIT)  # 5 requests per 15 minutes
 async def login(request: Request, data: LoginRequest):
     """
-    Login and get JWT token
+    Login and get JWT token with brute force protection
     """
+    from database.db import (
+        is_account_locked,
+        increment_failed_login,
+        reset_failed_login,
+        lock_account,
+        get_failed_login_count
+    )
+    
+    # Check if account is locked
+    if is_account_locked(data.email):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is temporarily locked due to multiple failed login attempts. Please try again later."
+        )
+    
     # Get user by email
     user = get_user_by_email(data.email)
     
     if not user:
+        # Don't reveal if email exists - generic error
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password"
@@ -171,9 +256,22 @@ async def login(request: Request, data: LoginRequest):
     
     # Verify password
     if not verify_password(data.password, user["hashed_password"]):
+        # Increment failed attempts
+        failed_count = increment_failed_login(data.email)
+        
+        # Lock account after 5 failed attempts
+        if failed_count >= 5:
+            lock_account(data.email, duration_minutes=15)
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Account locked due to multiple failed login attempts. Please try again in 15 minutes."
+            )
+        
+        # Generic error message
+        remaining_attempts = 5 - failed_count
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password"
+            detail=f"Invalid email or password. {remaining_attempts} attempts remaining before account lock."
         )
     
     # Check if user is active
@@ -182,6 +280,9 @@ async def login(request: Request, data: LoginRequest):
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is deactivated"
         )
+    
+    # Successful login - reset failed attempts
+    reset_failed_login(data.email)
     
     # Update last login
     update_last_login(user["id"])
