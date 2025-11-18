@@ -8,6 +8,8 @@ from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime, timedelta
 import logging
+import os
+import platform
 
 from database.db import (
     add_scan_schedule,
@@ -273,13 +275,22 @@ async def get_scan_profiles(request: Request):
 @limiter.limit(WRITE_LIMIT)
 async def start_scan_with_profile(request: Request, profile_name: str):
     """Start scan with predefined profile - SYNCHRONOUS VERSION"""
-    print(f"🔥🔥🔥 ENDPOINT CALLED: {profile_name}")  # ← ДОБАВИ ТОЗИ РЕД
-    logger.info(f"🔥 Starting scan with profile: {profile_name}")  # ← ДОБАВИ И ТОЗИ
+    print(f"🔥🔥🔥 ENDPOINT CALLED: {profile_name}")
+    logger.info(f"🔥 Starting scan with profile: {profile_name}")
+    
     try:
         if profile_name not in SCAN_PROFILES:
             raise HTTPException(status_code=400, detail="Invalid profile name")
         
         profile = SCAN_PROFILES[profile_name]
+        
+        # Detect OS and use appropriate scan path
+        if platform.system() == "Windows":
+            target_path = "C:\\"
+        else:  # Linux/Unix (Railway)
+            target_path = "/tmp"
+        
+        logger.info(f"📁 Detected OS: {platform.system()}, using path: {target_path}")
         
         # Create scan history entry
         started_at = datetime.utcnow().isoformat() + "Z"
@@ -287,13 +298,13 @@ async def start_scan_with_profile(request: Request, profile_name: str):
         history_id = add_scan_history(
             schedule_id=None,
             scan_type=profile["scan_type"],
-             target_path="/tmp",
+            target_path=target_path,
             started_at=started_at,
             status="running"
         )
         
         # Run scan DIRECTLY (not in background)
-        _execute_scan(history_id, profile["scan_type"], "/tmp")
+        _execute_scan(history_id, profile["scan_type"], target_path)
         
         return {
             "success": True,
