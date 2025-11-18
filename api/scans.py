@@ -475,33 +475,24 @@ def _execute_scan(history_id: int, scan_type: str, target_path: str):
         duration = int(time.time() - start_time)
         completed_at = datetime.utcnow().isoformat() + "Z"
         
-        # Prepare results
-        scan_results = {
-            "files_scanned": files_scanned,
-            "threats_found": threats_found,
-            "threat_details": threat_details[:10],  # Limit to 10 for storage
-            "scan_profile": profile["name"],
-            "detection_methods": {
-                "yara_rules": yara_engine.total_rules if yara_engine else 0,
-                "hash_database": len(KNOWN_MALWARE_HASHES)
-            }
-        }
+        # Log scan results (detailed info in logs instead of DB)
+        logger.info(f"✅ Scan completed!")
+        logger.info(f"   Files scanned: {files_scanned}")
+        logger.info(f"   Threats found: {threats_found}")
+        logger.info(f"   Duration: {duration}s")
+        if threat_details:
+            logger.info(f"   Threat details: {threat_details[:5]}")  # Log first 5
         
-        # Update scan history
+        # Update scan history (without results to avoid Railway DB column error)
         update_scan_history(
             history_id=history_id,
             completed_at=completed_at,
             status="completed",
             files_scanned=files_scanned,
             threats_found=threats_found,
-            duration_seconds=duration,
-            results=scan_results
+            duration_seconds=duration
+            # results parameter removed - not in Railway database schema
         )
-        
-        logger.info(f"✅ Scan completed!")
-        logger.info(f"   Files scanned: {files_scanned}")
-        logger.info(f"   Threats found: {threats_found}")
-        logger.info(f"   Duration: {duration}s")
         
     except Exception as e:
         logger.error(f"❌ Scan failed: {e}")
