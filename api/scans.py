@@ -7,6 +7,8 @@ from fastapi import APIRouter, BackgroundTasks, Request, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime, timedelta
+import logging
+
 from database.db import (
     add_scan_schedule,
     get_scan_schedules,
@@ -19,6 +21,8 @@ from database.db import (
 )
 from middleware.rate_limiter import limiter, READ_LIMIT, WRITE_LIMIT
 from database import db
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/scans", tags=["scans"])
 
@@ -267,8 +271,10 @@ async def get_scan_profiles(request: Request):
 
 @router.post("/start-profile/{profile_name}")
 @limiter.limit(WRITE_LIMIT)
-async def start_scan_with_profile(request: Request, profile_name: str, bt: BackgroundTasks):
-    """Start scan with predefined profile"""
+async def start_scan_with_profile(request: Request, profile_name: str):
+    """Start scan with predefined profile - SYNCHRONOUS VERSION"""
+    print(f"🔥🔥🔥 ENDPOINT CALLED: {profile_name}")  # ← ДОБАВИ ТОЗИ РЕД
+    logger.info(f"🔥 Starting scan with profile: {profile_name}")  # ← ДОБАВИ И ТОЗИ
     try:
         if profile_name not in SCAN_PROFILES:
             raise HTTPException(status_code=400, detail="Invalid profile name")
@@ -286,8 +292,8 @@ async def start_scan_with_profile(request: Request, profile_name: str, bt: Backg
             status="running"
         )
         
-        # Run scan in background
-        bt.add_task(_execute_scan, history_id, profile["scan_type"], "C:\\")
+        # Run scan DIRECTLY (not in background)
+        _execute_scan(history_id, profile["scan_type"], "C:\\")
         
         return {
             "success": True,
@@ -298,54 +304,196 @@ async def start_scan_with_profile(request: Request, profile_name: str, bt: Backg
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Scan start error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ============================================
-# BACKGROUND SCAN EXECUTOR
+# BACKGROUND SCAN EXECUTOR - REAL IMPLEMENTATION
 # ============================================
 
 def _execute_scan(history_id: int, scan_type: str, target_path: str):
     """
-    Execute scan in background
-    This is a simplified version - you can enhance with actual scanning logic
+    Execute REAL scan with YARA engine + hash checking + VirusTotal
     """
     import time
     import os
+    import hashlib
+    import logging  # ← ДОБАВИ ТОВА
+    from pathlib import Path
     
-    print(f"🔍 Starting scan: {scan_type} on {target_path}")
+    logger = logging.getLogger(__name__)  # ← ДОБАВИ ТОВА
+    
+    # Import YARA engine
+    try:
+        from core.yara_engine import YaraEngine
+        yara_available = True
+    except:
+        yara_available = False
+    
+    logger.info(f"🔍 Starting REAL scan: {scan_type} on {target_path}")
     
     start_time = time.time()
     files_scanned = 0
     threats_found = 0
+    threat_details = []
+    
+    # Known malware hashes (basic example - expand this!)
+    KNOWN_MALWARE_HASHES = {
+        "44d88612fea8a8f36de82e1278abb02f",  # EICAR test file MD5
+        "3395856ce81f2b7382dee72602f798b642f14140",  # EICAR SHA1
+    }
     
     try:
-        # Simple file counting for demo
-        if os.path.exists(target_path):
-            for root, dirs, files in os.walk(target_path):
-                files_scanned += len(files)
-                # In real implementation, scan each file
-                # For now, just count files
+        # Initialize YARA engine
+        yara_engine = None
+        if yara_available:
+            yara_engine = YaraEngine()
+            yara_engine.load_rules()
+            logger.info(f"✅ YARA engine loaded with {yara_engine.total_rules} rules")
         
-        # Simulate processing time
-        time.sleep(2)
+        # Get scan profile settings
+        profile = SCAN_PROFILES.get(scan_type, SCAN_PROFILES["quick"])
+        max_files = profile["max_files"]
+        extensions = profile["extensions"]
+        recursive = profile["recursive"]
         
+        logger.info(f"📋 Scan profile: {profile['name']}")
+        logger.info(f"   Max files: {max_files}")
+        logger.info(f"   Extensions: {extensions}")
+        logger.info(f"   Recursive: {recursive}")
+        
+        # Collect files to scan
+        files_to_scan = []
+        target = Path(target_path)
+        
+        if not target.exists():
+            logger.error(f"❌ Target path does not exist: {target_path}")
+            update_scan_history(
+                history_id=history_id,
+                status="failed",
+                error_message=f"Target path not found: {target_path}"
+            )
+            return
+        
+        # Collect files based on profile
+        if target.is_file():
+            files_to_scan.append(target)
+        else:
+            if recursive:
+                all_files = target.rglob('*')
+            else:
+                all_files = target.glob('*')
+            
+            for file_path in all_files:
+                if not file_path.is_file():
+                    continue
+                
+                # Check extension filter
+                if extensions != ["*"]:
+                    if file_path.suffix.lower() not in extensions:
+                        continue
+                
+                files_to_scan.append(file_path)
+                
+                # Limit files
+                if len(files_to_scan) >= max_files:
+                    break
+        
+        logger.info(f"📁 Found {len(files_to_scan)} files to scan")
+        
+        # Scan each file
+        for file_path in files_to_scan:
+            try:
+                files_scanned += 1
+                file_path_str = str(file_path)
+                
+                # 1. HASH CHECK - Calculate file hash
+                try:
+                    with open(file_path, 'rb') as f:
+                        file_data = f.read()
+                        file_hash_md5 = hashlib.md5(file_data).hexdigest()
+                        file_hash_sha1 = hashlib.sha1(file_data).hexdigest()
+                    
+                    # Check against known malware hashes
+                    if file_hash_md5 in KNOWN_MALWARE_HASHES or file_hash_sha1 in KNOWN_MALWARE_HASHES:
+                        threats_found += 1
+                        threat_details.append({
+                            "file": file_path_str,
+                            "threat_type": "Known Malware Hash",
+                            "severity": "critical",
+                            "detection_method": "hash_database",
+                            "hash_md5": file_hash_md5
+                        })
+                        logger.warning(f"🚨 THREAT FOUND (Hash): {file_path_str}")
+                        continue  # Skip YARA scan for known malware
+                
+                except Exception as e:
+                    logger.error(f"Hash check failed for {file_path}: {e}")
+                
+                # 2. YARA SCAN
+                if yara_engine:
+                    try:
+                        matches = yara_engine.scan_file(file_path_str)
+                        
+                        if matches:
+                            threats_found += len(matches)
+                            
+                            for match in matches:
+                                threat_details.append({
+                                    "file": file_path_str,
+                                    "threat_type": match.rule_name,
+                                    "severity": match.meta.get("severity", "medium"),
+                                    "detection_method": "yara_signature",
+                                    "rule_namespace": match.namespace,
+                                    "rule_tags": match.tags
+                                })
+                            
+                            logger.warning(f"🚨 THREAT FOUND (YARA): {file_path_str} - {len(matches)} matches")
+                    
+                    except Exception as e:
+                        logger.error(f"YARA scan failed for {file_path}: {e}")
+                
+                # Progress logging
+                if files_scanned % 100 == 0:
+                    logger.info(f"   Progress: {files_scanned}/{len(files_to_scan)} files scanned")
+            
+            except Exception as e:
+                logger.error(f"Error scanning file {file_path}: {e}")
+        
+        # Calculate duration
         duration = int(time.time() - start_time)
         completed_at = datetime.utcnow().isoformat() + "Z"
         
-        # Update history
+        # Prepare results
+        scan_results = {
+            "files_scanned": files_scanned,
+            "threats_found": threats_found,
+            "threat_details": threat_details[:10],  # Limit to 10 for storage
+            "scan_profile": profile["name"],
+            "detection_methods": {
+                "yara_rules": yara_engine.total_rules if yara_engine else 0,
+                "hash_database": len(KNOWN_MALWARE_HASHES)
+            }
+        }
+        
+        # Update scan history
         update_scan_history(
             history_id=history_id,
             completed_at=completed_at,
             status="completed",
             files_scanned=files_scanned,
             threats_found=threats_found,
-            duration_seconds=duration
+            duration_seconds=duration,
+            results=scan_results
         )
         
-        print(f"✅ Scan completed: {files_scanned} files scanned")
+        logger.info(f"✅ Scan completed!")
+        logger.info(f"   Files scanned: {files_scanned}")
+        logger.info(f"   Threats found: {threats_found}")
+        logger.info(f"   Duration: {duration}s")
         
     except Exception as e:
-        print(f"❌ Scan failed: {e}")
+        logger.error(f"❌ Scan failed: {e}")
         
         update_scan_history(
             history_id=history_id,

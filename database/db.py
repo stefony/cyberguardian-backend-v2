@@ -1699,7 +1699,8 @@ def update_scan_history(
     files_scanned: Optional[int] = None,
     threats_found: Optional[int] = None,
     duration_seconds: Optional[int] = None,
-    error_message: Optional[str] = None
+    error_message: Optional[str] = None,
+    results: Optional[Dict[str, Any]] = None  # ← НОВО
 ) -> bool:
     """Update scan history entry"""
     conn = get_connection()
@@ -1731,6 +1732,10 @@ def update_scan_history(
     if error_message is not None:
         updates.append("error_message = ?")
         params.append(error_message)
+    
+    if results is not None:  # ← НОВО
+        updates.append("results = ?")
+        params.append(json.dumps(results))
     
     if not updates:
         conn.close()
