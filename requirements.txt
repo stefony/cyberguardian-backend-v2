@@ -66,7 +66,6 @@ python-dotenv==1.0.0
 python-jose==3.5.0
 python-multipart==0.0.6
 pytz==2025.2
-pywin32==311
 PyYAML==6.0.3
 requests==2.31.0
 requests-html==0.10.0
